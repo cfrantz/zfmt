@@ -83,6 +83,7 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
 
     // serialize_into: copy each field in declaration order.
     let serialize_stmts = build_serialize_stmts(fields_syn);
+    let format_into_impl = crate::format_into::maybe_generate(input)?;
 
     let tag_lit = tag;
     let full_hash_lit = full_hash;
@@ -102,6 +103,8 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
                 #(#serialize_stmts)*
             }
         }
+
+        #format_into_impl
 
         #[used]
         #[cfg_attr(

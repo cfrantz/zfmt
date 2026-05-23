@@ -2,6 +2,8 @@ use proc_macro::TokenStream;
 use syn::{parse_macro_input, DeriveInput};
 
 mod bytecode;
+mod fmtstr;
+mod format_into;
 mod hash;
 mod parse;
 mod tier1;
