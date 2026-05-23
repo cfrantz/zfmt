@@ -1,0 +1,3 @@
+[workspace]
+members = ["zfmt-macro", "zfmt", "zfmt-host"]
+resolver = "2"

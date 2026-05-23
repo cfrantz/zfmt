@@ -1,0 +1,21 @@
+[package]
+name = "zfmt"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.77"
+
+[dependencies]
+zfmt-macro = { path = "../zfmt-macro" }
+
+[features]
+# Minimum severity level emitted (default: info)
+log-level-trace = []
+log-level-debug = []
+log-level-info  = []
+log-level-warn  = []
+log-level-error = []
+
+# Output mode (default: binary)
+output-binary = []
+output-text   = []
+output-both   = []
