@@ -396,8 +396,8 @@ mod tests {
         let h = FormatSpec { ty: FormatType::LowerHex, alternate: true, ..spec() };
         assert_eq!(render(255u8, h), "0xff");
 
-        let H = FormatSpec { ty: FormatType::UpperHex, alternate: true, ..spec() };
-        assert_eq!(render(255u8, H), "0XFF");
+        let uh = FormatSpec { ty: FormatType::UpperHex, alternate: true, ..spec() };
+        assert_eq!(render(255u8, uh), "0XFF");
 
         let b = FormatSpec { ty: FormatType::Binary, alternate: true, ..spec() };
         assert_eq!(render(5u8,  b), "0b101");

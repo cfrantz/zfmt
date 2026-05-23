@@ -8,3 +8,6 @@ rust-version = "1.77"
 proc-macro = true
 
 [dependencies]
+syn  = { version = "2", features = ["full"] }
+quote = "1"
+proc-macro2 = "1"
