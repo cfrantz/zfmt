@@ -18,6 +18,10 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
     let name_str = struct_name.to_string();
     let format_str = extract_format_str(&input.attrs)?;
 
+    // Collect generics so the impl blocks are `impl<'a, T> Foo<'a, T>`.
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
     let fields_syn = match &input.data {
         syn::Data::Struct(s) => &s.fields,
         _ => {
@@ -43,8 +47,14 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
     let full_hash: u64 = fnv1a_64(&hash_input);
     let tag: u32 = tag_of(full_hash);
 
-    // Build bytecode.
-    let bytecode = build_tier1_bytecode(fields_syn)?;
+    let tier2 = crate::tier2::is_tier2(fields_syn);
+
+    // Build bytecode (same structure for Tier-1 and Tier-2; var-length operand for str fields).
+    let bytecode = if tier2 {
+        build_tier2_bytecode(fields_syn)?
+    } else {
+        build_tier1_bytecode(fields_syn)?
+    };
 
     // format_hash: FNV-1a of the format string (0 if none).
     let format_hash: u32 = format_str
@@ -78,18 +88,31 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
     let entry_len = entry_bytes.len();
     let entry_lit = LitByteStr::new(&entry_bytes, Span::call_site());
 
-    // payload_size: sum of size_of for all fields (compile-time constant for Tier-1).
-    let payload_size_expr = build_payload_size_expr(fields_syn);
+    let payload_size_expr = if tier2 {
+        crate::tier2::build_tier2_payload_size(fields_syn)
+    } else {
+        build_payload_size_expr(fields_syn)
+    };
 
-    // serialize_into: copy each field in declaration order.
-    let serialize_stmts = build_serialize_stmts(fields_syn);
+    let (serialize_stmts, has_pos) = if tier2 {
+        (crate::tier2::build_tier2_serialize(fields_syn), true)
+    } else {
+        (build_serialize_stmts(fields_syn), false)
+    };
+
     let format_into_impl = crate::format_into::maybe_generate(input)?;
 
     let tag_lit = tag;
     let full_hash_lit = full_hash;
 
+    let pos_init = if has_pos {
+        quote! { let mut _pos: usize = 0; }
+    } else {
+        quote! {}
+    };
+
     Ok(quote! {
-        impl #struct_name {
+        impl #impl_generics #struct_name #ty_generics #where_clause {
             pub const ZFMT_TAG: u32 = #tag_lit;
             pub const ZFMT_FULL_HASH: u64 = #full_hash_lit;
 
@@ -100,6 +123,7 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
             /// Write the serialized payload into `buf`.
             /// `buf` must be at least `payload_size()` bytes long.
             pub fn serialize_into(&self, buf: &mut [u8]) {
+                #pos_init
                 #(#serialize_stmts)*
             }
         }
@@ -191,6 +215,49 @@ fn emit_field_bytecode(out: &mut Vec<u8>, ty: &Type, canon: &str) -> syn::Result
             canon
         ),
     ))
+}
+
+/// Build bytecode for a Tier-2 struct — same as Tier-1 but str fields use
+/// `utf8-byte | var-length` (operand 3).  Str fields have no fixed size so
+/// alignment tracking resets after each one.
+fn build_tier2_bytecode(fields: &Fields) -> syn::Result<Vec<u8>> {
+    let mut out: Vec<u8> = Vec::new();
+    let mut prev_end_offset: usize = 0;
+
+    let all_fields: Vec<_> = match fields {
+        Fields::Named(n) => n.named.iter().collect(),
+        Fields::Unnamed(u) => u.unnamed.iter().collect(),
+        Fields::Unit => vec![],
+    };
+
+    for field in &all_fields {
+        let canon = canonical_type_str(&field.ty);
+
+        if canon == "str" {
+            // str fields: LEB128 element count in stream, then UTF-8 bytes.
+            // No alignment padding before/after a var-length field.
+            prev_end_offset = 0; // variable, alignment tracking resets
+            out.push(opcode(item::UTF8_BYTE, operand::VAR_LENGTH));
+            continue;
+        }
+
+        // Fixed field — same as Tier-1.
+        let (field_align, field_size) = align_and_size_of(&field.ty, &canon)?;
+        let aligned_offset = align_up(prev_end_offset, field_align);
+        let pad = aligned_offset - prev_end_offset;
+        if pad > 0 {
+            push_skip(&mut out, pad);
+        }
+        if is_padding_field(field) {
+            push_skip(&mut out, field_size);
+        } else {
+            emit_field_bytecode(&mut out, &field.ty, &canon)?;
+        }
+        prev_end_offset = aligned_offset + field_size;
+    }
+
+    out.push(opcode(item::END, operand::SINGLE));
+    Ok(out)
 }
 
 // ---------------------------------------------------------------------------

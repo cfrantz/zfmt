@@ -7,6 +7,7 @@ mod format_into;
 mod hash;
 mod parse;
 mod tier1;
+mod tier2;
 
 #[proc_macro_derive(Zfmt, attributes(zfmt))]
 pub fn derive_zfmt(input: TokenStream) -> TokenStream {

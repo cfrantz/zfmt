@@ -1,6 +1,7 @@
 #![cfg_attr(not(test), no_std)]
 
 mod format;
+pub mod leb128;
 mod logger;
 mod write;
 

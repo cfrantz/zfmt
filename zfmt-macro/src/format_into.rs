@@ -18,6 +18,8 @@ pub fn maybe_generate(input: &DeriveInput) -> syn::Result<Option<TokenStream>> {
     };
 
     let struct_name = &input.ident;
+    let generics = &input.generics;
+    let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
     let fields_syn = match &input.data {
         syn::Data::Struct(s) => &s.fields,
         _ => return Ok(None),
@@ -52,7 +54,7 @@ pub fn maybe_generate(input: &DeriveInput) -> syn::Result<Option<TokenStream>> {
         .collect::<syn::Result<Vec<_>>>()?;
 
     Ok(Some(quote! {
-        impl #struct_name {
+        impl #impl_generics #struct_name #ty_generics #where_clause {
             pub fn format_into<W: ::zfmt::Write>(
                 &self,
                 writer: &mut W,
