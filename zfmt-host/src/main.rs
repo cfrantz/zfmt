@@ -155,7 +155,7 @@ fn cmd_decode(db_paths: Vec<PathBuf>, stream_path: PathBuf) -> Result<()> {
     let data = std::fs::read(&stream_path)
         .with_context(|| format!("read {}", stream_path.display()))?;
 
-    decode::decode_stream(&data, &dbs)
+    decode::decode_stream(&data, &dbs, &mut std::io::stdout())
 }
 
 fn cmd_verify(db_path: PathBuf, elf_path: PathBuf) -> Result<()> {

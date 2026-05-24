@@ -1,15 +1,18 @@
 //! Binary stream decoder (§6) — wire framing, tag lookup, bytecode interpretation.
 
+use std::io;
+
 use anyhow::{Context, Result};
 
 use crate::db::Db;
 use crate::interpret;
 
-/// Decode a binary stream, printing one line per event to stdout.
+/// Decode a binary stream, writing one line per frame to `out`.
 ///
 /// Each frame is: `tag(u32 LE) | LEB128(payload_len) | payload[payload_len]`.
-/// Unknown tags are warned and skipped; known tags are interpreted and rendered.
-pub fn decode_stream(data: &[u8], databases: &[Db]) -> Result<()> {
+/// Unknown tags are warned to stderr and skipped; decode errors are warned
+/// and a placeholder line is written so the rest of the stream continues.
+pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write) -> Result<()> {
     let mut pos = 0usize;
 
     while pos < data.len() {
@@ -65,11 +68,11 @@ pub fn decode_stream(data: &[u8], databases: &[Db]) -> Result<()> {
                             },
                             None => fallback_join(&values),
                         };
-                        println!("[{tag_hex}] {line}");
+                        writeln!(out, "[{tag_hex}] {line}")?;
                     }
                     Err(err) => {
                         eprintln!("warn: interpret error for {tag_hex}: {err}");
-                        println!("[{tag_hex}] <decode error> ({payload_len}B payload)");
+                        writeln!(out, "[{tag_hex}] <decode error> ({payload_len}B payload)")?;
                     }
                 }
             }
@@ -116,6 +119,8 @@ pub(crate) fn decode_leb128(buf: &[u8]) -> Result<(u64, usize)> {
 mod tests {
     use super::*;
 
+    fn sink() -> impl io::Write { io::sink() }
+
     #[test]
     fn decode_leb128_single_byte() {
         assert_eq!(decode_leb128(&[0x00]).unwrap(), (0, 1));
@@ -137,7 +142,7 @@ mod tests {
     #[test]
     fn decode_empty_stream() {
         let db = Db::memory().unwrap();
-        assert!(decode_stream(&[], &[db]).is_ok());
+        assert!(decode_stream(&[], &[db], &mut sink()).is_ok());
     }
 
     #[test]
@@ -148,7 +153,7 @@ mod tests {
         db.ingest(
             &[EventEntry {
                 tag, full_hash: tag as u64, format_hash: 0,
-                bytecode: vec![0x00], // END — no fields
+                bytecode: vec![0x00],
             }],
             &[],
             0,
@@ -156,7 +161,7 @@ mod tests {
 
         let mut stream = tag.to_le_bytes().to_vec();
         stream.push(0x00); // LEB128 payload_len = 0
-        assert!(decode_stream(&stream, &[db]).is_ok());
+        assert!(decode_stream(&stream, &[db], &mut sink()).is_ok());
     }
 
     #[test]
@@ -165,17 +170,47 @@ mod tests {
         let mut db = Db::memory().unwrap();
         let tag: u32 = 0xaabbccdd;
         let fmt_hash: u32 = 0x11223344;
-        // Bytecode: U32/single(0x18), END(0x00)
         db.ingest(
-            &[EventEntry { tag, full_hash: tag as u64, format_hash: fmt_hash, bytecode: vec![0x18, 0x00] }],
+            &[EventEntry { tag, full_hash: tag as u64, format_hash: fmt_hash,
+                           bytecode: vec![0x18, 0x00] }],
             &[StringEntry { hash: fmt_hash, content: "val={x}".to_owned() }],
             0,
         ).unwrap();
 
-        // Payload: u32 = 42
         let mut stream = tag.to_le_bytes().to_vec();
         stream.push(0x04); // LEB128(4)
         stream.extend_from_slice(&42u32.to_le_bytes());
-        assert!(decode_stream(&stream, &[db]).is_ok());
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("val=42"), "got: {s:?}");
+    }
+
+    #[test]
+    fn decode_captures_rendered_output() {
+        use crate::elf::{EventEntry, StringEntry};
+        let mut db = Db::memory().unwrap();
+        let tag: u32 = 0x11111111;
+        let fmt_hash: u32 = 0x22222222;
+        // UTF8_BYTE/var-length + END
+        db.ingest(
+            &[EventEntry { tag, full_hash: tag as u64, format_hash: fmt_hash,
+                           bytecode: vec![0x4b, 0x00] }],
+            &[StringEntry { hash: fmt_hash, content: "{msg}".to_owned() }],
+            0,
+        ).unwrap();
+
+        // Payload: LEB128(5) + "world"
+        let mut payload = vec![5u8];
+        payload.extend_from_slice(b"world");
+
+        let mut stream = tag.to_le_bytes().to_vec();
+        stream.push(payload.len() as u8);
+        stream.extend_from_slice(&payload);
+
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert_eq!(s.trim(), "[11111111] world");
     }
 }
