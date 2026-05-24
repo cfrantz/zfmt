@@ -8,4 +8,15 @@ rust-version = "1.77"
 name = "zfmt"
 path = "src/main.rs"
 
+[lib]
+name = "zfmt_host"
+path = "src/lib.rs"
+
 [dependencies]
+object   = { version = "0.36", default-features = false, features = ["read"] }
+rusqlite = { version = "0.31", features = ["bundled"] }
+clap     = { version = "4", features = ["derive"] }
+anyhow   = "1"
+
+[dev-dependencies]
+tempfile = "3"
