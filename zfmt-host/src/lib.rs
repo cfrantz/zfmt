@@ -4,3 +4,4 @@ pub mod db;
 pub mod decode;
 pub mod elf;
 pub mod export;
+pub mod interpret;
