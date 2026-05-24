@@ -1,0 +1,12 @@
+[package]
+name = "zfmt-testfw"
+version = "0.1.0"
+edition = "2021"
+publish = false
+
+[[bin]]
+name = "zfmt-testfw"
+path = "src/main.rs"
+
+[dependencies]
+zfmt = { path = "../zfmt" }
