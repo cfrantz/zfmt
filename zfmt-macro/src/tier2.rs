@@ -52,11 +52,8 @@ pub fn build_tier2_payload_size(fields: &Fields) -> TokenStream {
         Fields::Unit => vec![],
     };
 
-    // Walk in order, tracking alignment for fixed fields.
     let mut offset: usize = 0;
-    let mut terms_fixed: Vec<TokenStream> = Vec::new();
-
-    for (ty, access, is_pad) in &all {
+    for (ty, access, _is_pad) in &all {
         let canon = canonical_type_str(ty);
         if canon == "str" {
             // Flush any accumulated fixed-field contribution.
@@ -122,7 +119,7 @@ pub fn build_tier2_serialize(fields: &Fields) -> Vec<TokenStream> {
 
     let mut offset: usize = 0;
 
-    for (ty, access, is_pad) in &all {
+    for (ty, access, _is_pad) in &all {
         let canon = canonical_type_str(ty);
         if canon == "str" {
             // Emit LEB128 length, then bytes.

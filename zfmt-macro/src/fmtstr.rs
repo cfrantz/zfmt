@@ -210,6 +210,7 @@ mod tests {
     fn ph(name: &str) -> Segment {
         Segment::Placeholder(Placeholder { name: name.to_owned(), spec: ParsedSpec::default() })
     }
+    #[allow(dead_code)]
     fn ph_spec(name: &str, spec: ParsedSpec) -> Segment {
         Segment::Placeholder(Placeholder { name: name.to_owned(), spec })
     }
