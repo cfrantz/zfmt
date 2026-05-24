@@ -4,7 +4,7 @@
 //! derive macro generates `::zfmt::` absolute paths, which cannot resolve from
 //! within the `zfmt` crate itself.
 
-use crate::{Format, FormatSpec, FormatType, Align, Write, Error, leb128};
+use crate::{Format, FormatSpec, FormatType, Align, Write, Error, leb128, ZfmtEvent};
 
 // ---------------------------------------------------------------------------
 // §7.1  Severity
@@ -97,6 +97,18 @@ impl EventHeader {
     }
 }
 
+impl ZfmtEvent for EventHeader {
+    fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
+    fn payload_size(&self) -> usize { core::mem::size_of::<Self>() }
+    fn with_payload_bytes<F: FnOnce(&[u8])>(&self, f: F) {
+        // SAFETY: repr(C), explicit _pad field — no uninitialized bytes.
+        let bytes = unsafe {
+            core::slice::from_raw_parts(self as *const Self as *const u8, core::mem::size_of::<Self>())
+        };
+        f(bytes);
+    }
+}
+
 #[used]
 #[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.640003d2")]
 #[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.640003d2")]
@@ -167,6 +179,18 @@ impl StreamStart {
     }
 }
 
+impl ZfmtEvent for StreamStart {
+    fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
+    fn payload_size(&self) -> usize { core::mem::size_of::<Self>() }
+    fn with_payload_bytes<F: FnOnce(&[u8])>(&self, f: F) {
+        // SAFETY: repr(C), explicit _pad0 field — no uninitialized bytes.
+        let bytes = unsafe {
+            core::slice::from_raw_parts(self as *const Self as *const u8, core::mem::size_of::<Self>())
+        };
+        f(bytes);
+    }
+}
+
 #[used]
 #[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.9e106a38")]
 #[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.9e106a38")]
@@ -217,6 +241,18 @@ impl DroppedEvents {
     }
 }
 
+impl ZfmtEvent for DroppedEvents {
+    fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
+    fn payload_size(&self) -> usize { core::mem::size_of::<Self>() }
+    fn with_payload_bytes<F: FnOnce(&[u8])>(&self, f: F) {
+        // SAFETY: repr(C), explicit _pad field — no uninitialized bytes.
+        let bytes = unsafe {
+            core::slice::from_raw_parts(self as *const Self as *const u8, core::mem::size_of::<Self>())
+        };
+        f(bytes);
+    }
+}
+
 #[used]
 #[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.e0ee1b4e")]
 #[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.e0ee1b4e")]
@@ -255,13 +291,13 @@ impl<'a> DebugMessage<'a> {
     pub fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
 
     pub fn payload_size(&self) -> usize {
-        leb128::encoded_len(self.message.len() as u64) + self.message.len()
+        leb128::encoded_len(self.message.len() as u32) + self.message.len()
     }
 
     pub fn serialize_into(&self, buf: &mut [u8]) {
         let mut pos = 0usize;
-        let mut leb = [0u8; 10];
-        let ln = leb128::encode(self.message.len() as u64, &mut leb);
+        let mut leb = [0u8; 5];
+        let ln = leb128::encode(self.message.len() as u32, &mut leb);
         buf[pos..pos + ln].copy_from_slice(&leb[..ln]);
         pos += ln;
         let sb = self.message.as_bytes();
@@ -270,6 +306,18 @@ impl<'a> DebugMessage<'a> {
 
     pub fn format_into<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
         writer.write_str(self.message)
+    }
+}
+
+impl<'a> ZfmtEvent for DebugMessage<'a> {
+    fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
+    fn payload_size(&self) -> usize { self.payload_size() }
+    fn with_payload_bytes<F: FnOnce(&[u8])>(&self, f: F) {
+        const MAX_MSG: usize = 256;
+        let sz = self.payload_size();
+        let mut buf = [0u8; MAX_MSG];
+        self.serialize_into(&mut buf);
+        f(&buf[..sz]);
     }
 }
 
