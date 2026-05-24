@@ -112,10 +112,41 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
         quote! {}
     };
 
+    // ZfmtEvent impl: Tier-1 uses zero-copy from_raw_parts; Tier-2 serializes.
+    let (payload_size_const, zfmt_event_impl) = if tier2 {
+        let (impl_g2, ty_g2, wc2) = generics.split_for_impl();
+        let t2 = crate::tier2::build_tier2_zfmt_event_impl(
+            struct_name, &impl_g2, &ty_g2, wc2,
+            &payload_size_expr,
+        );
+        (quote! {}, t2)
+    } else {
+        let logical_size = compute_logical_payload_size(fields_syn)?;
+        let t1 = quote! {
+            impl #impl_generics ::zfmt::ZfmtEvent for #struct_name #ty_generics #where_clause {
+                fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
+                fn payload_size(&self) -> usize { Self::ZFMT_PAYLOAD_SIZE }
+                fn with_payload_bytes<F: ::core::ops::FnOnce(&[u8])>(&self, f: F) {
+                    // SAFETY: repr(C) struct; first ZFMT_PAYLOAD_SIZE bytes are all
+                    // initialized field data (tail padding, if any, is excluded).
+                    let bytes = unsafe {
+                        ::core::slice::from_raw_parts(
+                            self as *const Self as *const u8,
+                            Self::ZFMT_PAYLOAD_SIZE,
+                        )
+                    };
+                    f(bytes);
+                }
+            }
+        };
+        (quote! { pub const ZFMT_PAYLOAD_SIZE: usize = #logical_size; }, t1)
+    };
+
     Ok(quote! {
         impl #impl_generics #struct_name #ty_generics #where_clause {
             pub const ZFMT_TAG: u32 = #tag_lit;
             pub const ZFMT_FULL_HASH: u64 = #full_hash_lit;
+            #payload_size_const
 
             pub fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
 
@@ -130,6 +161,8 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
                 #(#serialize_stmts)*
             }
         }
+
+        #zfmt_event_impl
 
         #format_into_impl
 
@@ -290,6 +323,24 @@ fn build_serialize_stmts(_fields: &Fields) -> Vec<TokenStream> {
 
 // ---------------------------------------------------------------------------
 // Alignment / size helpers
+
+/// Compute the logical payload size: end of last field with natural alignment,
+/// excluding any trailing struct padding (`repr(C)` tail padding).
+fn compute_logical_payload_size(fields: &Fields) -> syn::Result<usize> {
+    let mut offset: usize = 0;
+    let all: Vec<_> = match fields {
+        Fields::Named(n) => n.named.iter().collect(),
+        Fields::Unnamed(u) => u.unnamed.iter().collect(),
+        Fields::Unit => return Ok(0),
+    };
+    for field in &all {
+        let canon = canonical_type_str(&field.ty);
+        let (field_align, field_size) = align_and_size_of(&field.ty, &canon)?;
+        let aligned = align_up(offset, field_align);
+        offset = aligned + field_size;
+    }
+    Ok(offset)
+}
 
 fn align_and_size_of(ty: &Type, canon: &str) -> syn::Result<(usize, usize)> {
     // Primitive types

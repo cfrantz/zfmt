@@ -165,6 +165,18 @@ fn derive_toplevel_enum(input: &DeriveInput, data: &DataEnum) -> syn::Result<Tok
             }
         }
 
+        impl #impl_generics ::zfmt::ZfmtEvent for #enum_ident #ty_generics #where_clause {
+            fn zfmt_tag(&self) -> u32 { self.zfmt_tag() }
+            fn payload_size(&self) -> usize { self.payload_size() }
+            fn with_payload_bytes<F: ::core::ops::FnOnce(&[u8])>(&self, f: F) {
+                const ZFMT_MAX_PAYLOAD: usize = 256;
+                let sz = ::zfmt::ZfmtEvent::payload_size(self);
+                let mut buf = [0u8; ZFMT_MAX_PAYLOAD];
+                self.serialize_into(&mut buf);
+                f(&buf[..sz]);
+            }
+        }
+
         #(#linker_statics)*
     })
 }

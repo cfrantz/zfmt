@@ -36,12 +36,12 @@ pub fn gen_payload_and_serialize(plans: &[FieldPlan]) -> (TokenStream, Vec<Token
             let access = &plan.access;
             size_terms.push(quote! {{
                 let _s: &str = &#access;
-                ::zfmt::leb128::encoded_len(_s.len() as u64) + _s.len()
+                ::zfmt::leb128::encoded_len(_s.len() as u32) + _s.len()
             }});
             stmts.push(quote! {{
                 let _s: &str = &#access;
-                let _slen = _s.len() as u64;
-                let mut _leb = [0u8; 10];
+                let _slen = _s.len() as u32;
+                let mut _leb = [0u8; 5];
                 let _ln = ::zfmt::leb128::encode(_slen, &mut _leb);
                 buf[_pos.._pos + _ln].copy_from_slice(&_leb[.._ln]);
                 _pos += _ln;

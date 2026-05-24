@@ -62,7 +62,7 @@ pub fn build_tier2_payload_size(fields: &Fields) -> TokenStream {
             terms.push(quote! {
                 {
                     let s: &str = #access;
-                    ::zfmt::leb128::encoded_len(s.len() as u64) + s.len()
+                    ::zfmt::leb128::encoded_len(s.len() as u32) + s.len()
                 }
             });
             offset = 0; // str fields break the fixed run; padding resets
@@ -126,8 +126,8 @@ pub fn build_tier2_serialize(fields: &Fields) -> Vec<TokenStream> {
             stmts.push(quote! {
                 {
                     let s: &str = #access;
-                    let slen = s.len() as u64;
-                    let mut leb_buf = [0u8; 10];
+                    let slen = s.len() as u32;
+                    let mut leb_buf = [0u8; 5];
                     let leb_n = ::zfmt::leb128::encode(slen, &mut leb_buf);
                     buf[_pos.._pos + leb_n].copy_from_slice(&leb_buf[..leb_n]);
                     _pos += leb_n;
@@ -187,6 +187,30 @@ pub fn build_tier2_serialize(fields: &Fields) -> Vec<TokenStream> {
     }
 
     stmts
+}
+
+/// Generate `impl ::zfmt::ZfmtEvent for Struct` for a Tier-2 (variable-length) struct.
+/// Uses a 256-byte stack buffer and `serialize_into` since payload length is not const.
+pub fn build_tier2_zfmt_event_impl(
+    struct_name: &proc_macro2::Ident,
+    impl_generics: &syn::ImplGenerics<'_>,
+    ty_generics: &syn::TypeGenerics<'_>,
+    where_clause: Option<&syn::WhereClause>,
+    payload_size_expr: &TokenStream,
+) -> TokenStream {
+    quote! {
+        impl #impl_generics ::zfmt::ZfmtEvent for #struct_name #ty_generics #where_clause {
+            fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
+            fn payload_size(&self) -> usize { #payload_size_expr }
+            fn with_payload_bytes<F: ::core::ops::FnOnce(&[u8])>(&self, f: F) {
+                const ZFMT_MAX_PAYLOAD: usize = 256;
+                let sz = ::zfmt::ZfmtEvent::payload_size(self);
+                let mut buf = [0u8; ZFMT_MAX_PAYLOAD];
+                self.serialize_into(&mut buf);
+                f(&buf[..sz]);
+            }
+        }
+    }
 }
 
 fn align_up(offset: usize, align: usize) -> usize {

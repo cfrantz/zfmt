@@ -3,30 +3,42 @@
 /// Send a structured event to a logger.
 ///
 /// Usage: `log_event!(logger, severity, event_expr)`
-/// where `event_expr` evaluates to a type that implements the zfmt event interface.
+/// where `event_expr` evaluates to a type that implements `ZfmtEvent`.
+///
+/// Sends exactly two slices via `send_vectored`:
+///   slice[0] — framing: hdr_tag + hdr_leb + hdr_payload + evt_tag + evt_leb (≤ 30 bytes)
+///   slice[1] — event payload (zero-copy for Tier-1; serialized for Tier-2)
 #[macro_export]
 macro_rules! log_event {
     ($logger:expr, $severity:expr, $event:expr) => {{
-        let ts = $crate::Logger::timestamp(&$logger);
+        // Bind logger once to avoid evaluating the expression twice.
+        let ref mut _logger = $logger;
+        let ts = $crate::Logger::timestamp(&*_logger);
         let hdr = $crate::events::EventHeader::new(ts, $severity);
         let event = $event;
-        let hdr_payload_len = hdr.payload_size();
-        let evt_payload_len = event.payload_size();
-        let hdr_leb_len = $crate::leb128::encoded_len(hdr_payload_len as u64);
-        let evt_leb_len = $crate::leb128::encoded_len(evt_payload_len as u64);
-        let total = 4 + hdr_leb_len + hdr_payload_len + 4 + evt_leb_len + evt_payload_len;
-        const BUF: usize = 256;
-        let mut buf = [0u8; BUF];
-        if total <= BUF {
-            let mut pos = 0usize;
-            buf[pos..pos+4].copy_from_slice(&hdr.zfmt_tag().to_le_bytes()); pos += 4;
-            pos += $crate::leb128::encode(hdr_payload_len as u64, &mut buf[pos..]);
-            hdr.serialize_into(&mut buf[pos..pos+hdr_payload_len]); pos += hdr_payload_len;
-            buf[pos..pos+4].copy_from_slice(&event.zfmt_tag().to_le_bytes()); pos += 4;
-            pos += $crate::leb128::encode(evt_payload_len as u64, &mut buf[pos..]);
-            event.serialize_into(&mut buf[pos..pos+evt_payload_len]);
-            $crate::Logger::send(&mut $logger, &buf[..total]);
-        }
+
+        let hdr_payload_len = $crate::ZfmtEvent::payload_size(&hdr) as u32;
+        let evt_payload_len = $crate::ZfmtEvent::payload_size(&event) as u32;
+
+        // framing: hdr_tag(4) + hdr_leb(≤5) + hdr_payload(16) + evt_tag(4) + evt_leb(≤5) = ≤34
+        let mut framing = [0u8; 34];
+        let mut n = 0usize;
+
+        framing[n..n + 4].copy_from_slice(&$crate::ZfmtEvent::zfmt_tag(&hdr).to_le_bytes());
+        n += 4;
+        n += $crate::leb128::encode(hdr_payload_len, &mut framing[n..]);
+        $crate::ZfmtEvent::with_payload_bytes(&hdr, |hdr_bytes| {
+            framing[n..n + hdr_bytes.len()].copy_from_slice(hdr_bytes);
+            n += hdr_bytes.len();
+        });
+        framing[n..n + 4].copy_from_slice(&$crate::ZfmtEvent::zfmt_tag(&event).to_le_bytes());
+        n += 4;
+        n += $crate::leb128::encode(evt_payload_len, &mut framing[n..]);
+
+        let framing_len = n;
+        $crate::ZfmtEvent::with_payload_bytes(&event, |evt_bytes| {
+            $crate::Logger::send_vectored(_logger, &[&framing[..framing_len], evt_bytes]);
+        });
     }};
 }
 
