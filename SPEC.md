@@ -46,7 +46,7 @@ readable output on the host, even for events from older firmware versions.
 | **Event table** | A linker section mapping tags to format string hashes and bytecode |
 | **Tier-1 event** | An event whose serialized form is a fixed-size `repr(C)` struct |
 | **Tier-2 event** | An event containing one or more variable-length fields |
-| **Inline enum** | A `repr(C, uN)` enum used as a field within a struct; decoded via the `dispatch` opcode; not independently logged |
+| **Inline enum** | A `repr(uN)` (or `repr(C, uN)` for data-carrying) enum used as a field within a struct; decoded via the `dispatch` opcode; not independently logged |
 | **DebugMessage** | Well-known Tier-2 event carrying a pre-formatted UTF-8 string; emitted by the unstructured logging path (§7.5, §13.3) |
 
 ---
@@ -396,10 +396,10 @@ application-defined events.
 
 ### 7.1 Severity
 
-`Severity` is a `repr(C, u8)` enum used as a field in `EventHeader`.
+`Severity` is a `repr(u8)` enum used as a field in `EventHeader`.
 
 ```rust
-#[repr(C, u8)]
+#[repr(u8)]
 pub enum Severity {
     Trace = 0,
     Debug = 1,
