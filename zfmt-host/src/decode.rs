@@ -1,21 +1,18 @@
-//! Binary stream decoder (§6, Phase 8 full implementation).
-//!
-//! Phase 7 skeleton: parses the wire framing and looks up each tag in the
-//! database.  Bytecode interpretation and field decoding are Phase 8.
+//! Binary stream decoder (§6) — wire framing, tag lookup, bytecode interpretation.
 
 use anyhow::{Context, Result};
 
 use crate::db::Db;
+use crate::interpret;
 
 /// Decode a binary stream, printing one line per event to stdout.
 ///
-/// Unknown tags are skipped (their payload bytes are consumed and a warning
-/// is printed).
+/// Each frame is: `tag(u32 LE) | LEB128(payload_len) | payload[payload_len]`.
+/// Unknown tags are warned and skipped; known tags are interpreted and rendered.
 pub fn decode_stream(data: &[u8], databases: &[Db]) -> Result<()> {
     let mut pos = 0usize;
 
     while pos < data.len() {
-        // Minimum: tag(4) + at least one LEB128 byte
         if data.len() - pos < 5 {
             eprintln!(
                 "warn: {} trailing bytes at offset {pos} — not enough for a frame header",
@@ -34,7 +31,8 @@ pub fn decode_stream(data: &[u8], databases: &[Db]) -> Result<()> {
         let payload_len = payload_len as usize;
         if data.len() - pos < payload_len {
             eprintln!(
-                "warn: truncated stream: need {payload_len} bytes at offset {pos} but only {} remain",
+                "warn: truncated stream: need {payload_len} bytes at offset {pos} \
+                 but only {} remain",
                 data.len() - pos
             );
             break;
@@ -42,36 +40,44 @@ pub fn decode_stream(data: &[u8], databases: &[Db]) -> Result<()> {
         let payload = &data[pos..pos + payload_len];
         pos += payload_len;
 
-        // Look up the tag in the provided databases (first match wins).
-        let entry = databases.iter().find_map(|db| {
+        // Find the event entry (first database wins).
+        let result = databases.iter().find_map(|db| {
             db.all_events().ok().and_then(|evts| {
-                evts.into_iter().find(|e| e.tag == tag)
+                evts.into_iter().find(|e| e.tag == tag).map(|e| (e, db))
             })
         });
 
-        match entry {
-            Some(e) => {
-                // Phase 7: emit a minimal decoded line.
-                // Phase 8 will add full bytecode interpretation.
-                let fmt = databases.iter().find_map(|db| {
-                    db.lookup_string(e.format_hash).ok().flatten()
-                });
+        match result {
+            Some((e, db)) => {
                 let tag_hex = format!("{:08x}", tag);
-                if let Some(f) = fmt {
-                    println!("[{tag_hex}] {f} ({payload_len}B payload)");
-                } else {
-                    println!(
-                        "[{tag_hex}] <no format string> ({payload_len}B payload)"
-                    );
+                match interpret::interpret(&e.bytecode, payload, db) {
+                    Ok(values) => {
+                        let fmt_opt = databases.iter().find_map(|d| {
+                            d.lookup_string(e.format_hash).ok().flatten()
+                        });
+                        let line = match fmt_opt {
+                            Some(fmt) => match interpret::render(&fmt, &values) {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    eprintln!("warn: render error for {tag_hex}: {err}");
+                                    fallback_join(&values)
+                                }
+                            },
+                            None => fallback_join(&values),
+                        };
+                        println!("[{tag_hex}] {line}");
+                    }
+                    Err(err) => {
+                        eprintln!("warn: interpret error for {tag_hex}: {err}");
+                        println!("[{tag_hex}] <decode error> ({payload_len}B payload)");
+                    }
                 }
-                // Suppress unused variable warning — payload will be decoded in Phase 8.
-                let _ = payload;
             }
             None => {
+                let frame_start = pos - 4 - leb_n - payload_len;
                 eprintln!(
-                    "warn: unknown tag {:08x} at offset {} ({payload_len}B skipped)",
-                    tag,
-                    pos - 4 - leb_n - payload_len
+                    "warn: unknown tag {:08x} at offset {frame_start} ({payload_len}B skipped)",
+                    tag
                 );
             }
         }
@@ -80,9 +86,13 @@ pub fn decode_stream(data: &[u8], databases: &[Db]) -> Result<()> {
     Ok(())
 }
 
+fn fallback_join(values: &[interpret::Value]) -> String {
+    values.iter().map(|v| v.display_default()).collect::<Vec<_>>().join(" ")
+}
+
 /// Decode an unsigned LEB128 integer from `buf`.
 /// Returns `(value, bytes_consumed)`.
-fn decode_leb128(buf: &[u8]) -> Result<(u64, usize)> {
+pub(crate) fn decode_leb128(buf: &[u8]) -> Result<(u64, usize)> {
     let mut value: u64 = 0;
     let mut shift: u32 = 0;
     for (i, &byte) in buf.iter().enumerate() {
@@ -115,9 +125,7 @@ mod tests {
 
     #[test]
     fn decode_leb128_multibyte() {
-        // 128 = 0x80 0x01
         assert_eq!(decode_leb128(&[0x80, 0x01]).unwrap(), (128, 2));
-        // 300 = 0xAC 0x02
         assert_eq!(decode_leb128(&[0xAC, 0x02]).unwrap(), (300, 2));
     }
 
@@ -133,23 +141,41 @@ mod tests {
     }
 
     #[test]
-    fn decode_known_event() {
+    fn decode_known_event_end_only() {
         use crate::elf::EventEntry;
         let mut db = Db::memory().unwrap();
         let tag: u32 = 0x12345678;
         db.ingest(
             &[EventEntry {
                 tag, full_hash: tag as u64, format_hash: 0,
-                bytecode: vec![0x00],
+                bytecode: vec![0x00], // END — no fields
             }],
             &[],
             0,
-        )
-        .unwrap();
+        ).unwrap();
 
-        // Build a minimal stream: tag(4) + LEB128(0) = 5 bytes
         let mut stream = tag.to_le_bytes().to_vec();
-        stream.push(0x00); // payload length = 0
+        stream.push(0x00); // LEB128 payload_len = 0
+        assert!(decode_stream(&stream, &[db]).is_ok());
+    }
+
+    #[test]
+    fn decode_event_with_format_string() {
+        use crate::elf::{EventEntry, StringEntry};
+        let mut db = Db::memory().unwrap();
+        let tag: u32 = 0xaabbccdd;
+        let fmt_hash: u32 = 0x11223344;
+        // Bytecode: U32/single(0x18), END(0x00)
+        db.ingest(
+            &[EventEntry { tag, full_hash: tag as u64, format_hash: fmt_hash, bytecode: vec![0x18, 0x00] }],
+            &[StringEntry { hash: fmt_hash, content: "val={x}".to_owned() }],
+            0,
+        ).unwrap();
+
+        // Payload: u32 = 42
+        let mut stream = tag.to_le_bytes().to_vec();
+        stream.push(0x04); // LEB128(4)
+        stream.extend_from_slice(&42u32.to_le_bytes());
         assert!(decode_stream(&stream, &[db]).is_ok());
     }
 }
