@@ -101,6 +101,7 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let format_into_impl = crate::format_into::maybe_generate(input)?;
+    let string_section = crate::codegen::gen_string_section(format_str.as_deref());
 
     let tag_lit = tag;
     let full_hash_lit = full_hash;
@@ -142,6 +143,8 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
             link_section = #section_name
         )]
         static #static_name: [u8; #entry_len] = *#entry_lit;
+
+        #string_section
     })
 }
 

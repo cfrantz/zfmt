@@ -116,6 +116,22 @@ static _ZFMT_EVENT_HEADER: [u8; 36] = {
     ]
 };
 
+// String section for EventHeader format string "{timestamp} {severity}" (22 bytes).
+// hash=0x112d69b2, len=22; entry padded to 32 bytes.
+#[used]
+#[cfg_attr(    target_os = "none",  link_section = ".zfmt_strings.112d69b2")]
+#[cfg_attr(not(target_os = "none"), link_section = ".zfmt_strings.112d69b2")]
+static _ZFMT_STR_EVENT_HEADER_FMT: [u8; 32] = [
+    0xb2, 0x69, 0x2d, 0x11,     // hash = 0x112d69b2
+    0x16, 0x00,                  // len = 22
+    0x00, 0x00,                  // _pad
+    // "{timestamp} {severity}"
+    b'{', b't', b'i', b'm', b'e', b's', b't', b'a',
+    b'm', b'p', b'}', b' ',  b'{', b's', b'e', b'v',
+    b'e', b'r', b'i', b't', b'y', b'}',
+    0x00, 0x00,                  // padding to 32 bytes
+];
+
 // ---------------------------------------------------------------------------
 // §7.3  StreamStart
 //
@@ -256,6 +272,20 @@ impl<'a> DebugMessage<'a> {
         writer.write_str(self.message)
     }
 }
+
+// String section for DebugMessage format string "{message}" (9 bytes).
+// hash=0x524fb994, len=9; entry padded to 20 bytes.
+#[used]
+#[cfg_attr(    target_os = "none",  link_section = ".zfmt_strings.524fb994")]
+#[cfg_attr(not(target_os = "none"), link_section = ".zfmt_strings.524fb994")]
+static _ZFMT_STR_DEBUG_MESSAGE_FMT: [u8; 20] = [
+    0x94, 0xb9, 0x4f, 0x52,     // hash = 0x524fb994
+    0x09, 0x00,                  // len = 9
+    0x00, 0x00,                  // _pad
+    // "{message}"
+    b'{', b'm', b'e', b's', b's', b'a', b'g', b'e', b'}',
+    0x00, 0x00, 0x00,            // padding to 20 bytes
+];
 
 #[used]
 #[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.a1a6a340")]

@@ -1,8 +1,8 @@
 //! Generic field planning and code generation shared by structs and enum variants.
 
-use proc_macro2::TokenStream;
-use quote::quote;
-use syn::{Expr, ExprLit, Lit, Type};
+use proc_macro2::{Span, TokenStream};
+use quote::{format_ident, quote};
+use syn::{Expr, ExprLit, Lit, LitByteStr, Type};
 
 use crate::{
     bytecode::{item, operand, opcode, push_skip, push_uleb128, size_of_canonical},
@@ -212,4 +212,45 @@ pub fn total_size_with_tail_padding(plans: &[FieldPlan]) -> Option<usize> {
         offset = aligned + fs;
     }
     Some(align_up(offset, max_align))
+}
+
+// ---------------------------------------------------------------------------
+// String section helpers
+
+/// Generate a `.zfmt_strings.<hex>` linker section static for a format string.
+///
+/// Entry layout (§8.2):
+///   hash(u32 LE) + len(u16 LE) + _pad(u16=0) + bytes[padded to 4-byte boundary]
+///
+/// Returns an empty TokenStream when `format_str` is None.
+pub fn gen_string_section(format_str: Option<&str>) -> TokenStream {
+    let fmt = match format_str {
+        Some(s) if !s.is_empty() => s,
+        _ => return quote! {},
+    };
+
+    let hash: u32 = crate::hash::fnv1a_64(fmt) as u32;
+    let str_bytes = fmt.as_bytes();
+    let str_len = str_bytes.len() as u16;
+
+    let mut entry: Vec<u8> = Vec::new();
+    entry.extend_from_slice(&hash.to_le_bytes());
+    entry.extend_from_slice(&str_len.to_le_bytes());
+    entry.extend_from_slice(&0u16.to_le_bytes()); // _pad
+    entry.extend_from_slice(str_bytes);
+    while entry.len() % 4 != 0 {
+        entry.push(0);
+    }
+
+    let entry_len = entry.len();
+    let entry_lit = LitByteStr::new(&entry, Span::call_site());
+    let section_name = format!(".zfmt_strings.{:08x}", hash);
+    let static_name = format_ident!("__ZFMT_STRING_{:08X}", hash);
+
+    quote! {
+        #[used]
+        #[cfg_attr(    target_os = "none",  link_section = #section_name)]
+        #[cfg_attr(not(target_os = "none"), link_section = #section_name)]
+        static #static_name: [u8; #entry_len] = *#entry_lit;
+    }
 }

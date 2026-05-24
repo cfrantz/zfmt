@@ -255,11 +255,14 @@ fn derive_inline_enum(
         let entry_len = entry.len();
         let entry_lit = LitByteStr::new(&entry, Span::call_site());
 
+        let string_section = crate::codegen::gen_string_section(vformat_str.as_deref());
         linker_statics.push(quote! {
             #[used]
             #[cfg_attr(target_os = "none", link_section = #section_name)]
             #[cfg_attr(not(target_os = "none"), link_section = #section_name)]
             static #static_name: [u8; #entry_len] = *#entry_lit;
+
+            #string_section
         });
     }
 
@@ -496,10 +499,14 @@ fn build_linker_static(
     let entry_len = entry.len();
     let entry_lit = LitByteStr::new(&entry, Span::call_site());
 
+    let string_section = crate::codegen::gen_string_section(format_str);
+
     Ok(quote! {
         #[used]
         #[cfg_attr(target_os = "none", link_section = #section_name)]
         #[cfg_attr(not(target_os = "none"), link_section = #section_name)]
         static #static_name: [u8; #entry_len] = *#entry_lit;
+
+        #string_section
     })
 }
