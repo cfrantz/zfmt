@@ -1,6 +1,6 @@
 //! Integration tests for Phase 5: enum events and inline enums.
 
-use zfmt::{Write, Zfmt};
+use zfmt::{FormatInto, Write, Zfmt};
 
 struct StrBuf(String);
 impl Write for StrBuf {

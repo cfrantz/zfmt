@@ -3,15 +3,22 @@
 mod format;
 pub mod leb128;
 mod logger;
+pub mod output;
 mod write;
 pub mod events;
 mod macros;
 
-pub use format::{Align, Format, FormatSpec, FormatType};
+pub use format::{Align, Format, FormatInto, FormatSpec, FormatType};
 pub use logger::{FlatAdapter, FlatSend, Logger};
 pub use write::{Error, FixedBuf, Write};
 
 pub use zfmt_macro::Zfmt;
+pub use zfmt_macro::zfmt_str;
+
+/// Internal proc-macro for the unstructured logging arms of `log_debug!` etc.
+/// Not intended for direct use.
+#[doc(hidden)]
+pub use zfmt_macro::__zfmt_log_text;
 
 /// Implemented by every event type, enabling generic logging via `log_event!`.
 ///
@@ -29,3 +36,13 @@ pub trait ZfmtEvent {
     /// payload is first serialized into a stack buffer before calling `f`.
     fn with_payload_bytes<F: FnOnce(&[u8])>(&self, f: F);
 }
+
+/// Called by unstructured logging arms of `log_info!`, `log_warn!`,
+/// `log_error!`, and `log_fatal!` to emit a compile-time deprecation warning.
+///
+/// Suppress with `#[allow(deprecated)]` at the call site.
+#[deprecated = "prefer structured events for log_info!/log_warn!/log_error!/log_fatal!; \
+                use log_debug! for unstructured text; suppress with #[allow(deprecated)]"]
+#[doc(hidden)]
+#[inline(always)]
+pub fn __zfmt_unstructured_above_debug() {}

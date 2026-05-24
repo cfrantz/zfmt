@@ -156,7 +156,10 @@ fn derive_toplevel_enum(input: &DeriveInput, data: &DataEnum) -> syn::Result<Tok
                 match self { #(#ser_arms)* }
             }
 
-            pub fn format_into<W: ::zfmt::Write>(
+        }
+
+        impl #impl_generics ::zfmt::FormatInto for #enum_ident #ty_generics #where_clause {
+            fn format_into<W: ::zfmt::Write>(
                 &self,
                 writer: &mut W,
             ) -> ::core::result::Result<(), ::zfmt::Error> {

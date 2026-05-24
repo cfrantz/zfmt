@@ -1,6 +1,6 @@
 //! Integration tests for Phase 3: format_into generation.
 
-use zfmt::{Write, Zfmt};
+use zfmt::{FormatInto, Write, Zfmt};
 
 struct StrWriter(String);
 impl Write for StrWriter {

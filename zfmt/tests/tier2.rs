@@ -1,6 +1,6 @@
 //! Integration tests for Phase 4: Tier-2 (variable-length field) events.
 
-use zfmt::{Write, Zfmt};
+use zfmt::{FormatInto, Write, Zfmt};
 
 // --- Tier-2 structs ---------------------------------------------------------
 

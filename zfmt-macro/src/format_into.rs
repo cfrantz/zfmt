@@ -1,4 +1,9 @@
-//! Generator for `format_into<W: Write>` methods (§11.4, Phase 3).
+//! Generator for `FormatInto` trait impls (§11.4, Phase 3).
+//!
+//! Every `#[derive(Zfmt)]` type receives an `impl ::zfmt::FormatInto` block.
+//! Events without a `#[zfmt(format = "...")]` attribute use the default no-op
+//! implementation inherited from the trait.  Events with a format string get a
+//! real implementation that renders each segment.
 
 use proc_macro2::TokenStream;
 use quote::quote;
@@ -9,20 +14,40 @@ use crate::{
     parse::{extract_format_str, parse_fields},
 };
 
-/// Generate the `format_into` impl block for a struct that carries a format string.
-/// Returns `None` if there is no `#[zfmt(format = "...")]` attribute.
-pub fn maybe_generate(input: &DeriveInput) -> syn::Result<Option<TokenStream>> {
-    let format_str = match extract_format_str(&input.attrs)? {
-        Some(s) => s,
-        None => return Ok(None),
-    };
-
+/// Generate the `impl ::zfmt::FormatInto` block for a derived type.
+///
+/// - If the type has a `#[zfmt(format = "...")]` attribute: generates a full
+///   impl that renders each segment.
+/// - Otherwise: generates an empty impl that uses the default no-op from the
+///   trait.
+///
+/// Always returns `Some` — every derived type gets a `FormatInto` impl so that
+/// `log_event!` can call `output::send_event` (which requires `E: FormatInto`).
+pub fn generate(input: &DeriveInput) -> syn::Result<TokenStream> {
     let struct_name = &input.ident;
     let generics = &input.generics;
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+
+    let format_str = match extract_format_str(&input.attrs)? {
+        Some(s) => s,
+        None => {
+            // No format string: emit an empty impl (uses the default no-op).
+            return Ok(quote! {
+                impl #impl_generics ::zfmt::FormatInto for #struct_name #ty_generics
+                #where_clause {}
+            });
+        }
+    };
+
     let fields_syn = match &input.data {
         syn::Data::Struct(s) => &s.fields,
-        _ => return Ok(None),
+        _ => {
+            // Enums: no inherent format_into; each variant is its own event.
+            return Ok(quote! {
+                impl #impl_generics ::zfmt::FormatInto for #struct_name #ty_generics
+                #where_clause {}
+            });
+        }
     };
 
     let parsed_fields = parse_fields(fields_syn)?;
@@ -32,7 +57,7 @@ pub fn maybe_generate(input: &DeriveInput) -> syn::Result<Option<TokenStream>> {
         syn::Error::new(input.span(), format!("zfmt format string error: {}", e))
     })?;
 
-    // Validate all placeholder names refer to known fields.
+    // Validate that all placeholder names refer to known fields.
     for seg in &segments {
         if let Segment::Placeholder(ph) = seg {
             if !field_names.contains(&ph.name.as_str()) {
@@ -53,9 +78,9 @@ pub fn maybe_generate(input: &DeriveInput) -> syn::Result<Option<TokenStream>> {
         .map(|seg| segment_to_stmt(seg, fields_syn))
         .collect::<syn::Result<Vec<_>>>()?;
 
-    Ok(Some(quote! {
-        impl #impl_generics #struct_name #ty_generics #where_clause {
-            pub fn format_into<W: ::zfmt::Write>(
+    Ok(quote! {
+        impl #impl_generics ::zfmt::FormatInto for #struct_name #ty_generics #where_clause {
+            fn format_into<W: ::zfmt::Write>(
                 &self,
                 writer: &mut W,
             ) -> ::core::result::Result<(), ::zfmt::Error> {
@@ -64,7 +89,7 @@ pub fn maybe_generate(input: &DeriveInput) -> syn::Result<Option<TokenStream>> {
                 Ok(())
             }
         }
-    }))
+    })
 }
 
 fn segment_to_stmt(seg: &Segment, fields: &Fields) -> syn::Result<TokenStream> {
@@ -106,7 +131,7 @@ fn field_access_expr(name: &str, fields: &Fields) -> syn::Result<TokenStream> {
 }
 
 /// Convert a `ParsedSpec` into a `::zfmt::FormatSpec { ... }` token stream.
-fn spec_to_expr(spec: &ParsedSpec) -> TokenStream {
+pub(crate) fn spec_to_expr(spec: &ParsedSpec) -> TokenStream {
     let ty = match spec.fmt_type {
         FmtType::Display  => quote! { ::zfmt::FormatType::Display },
         FmtType::LowerHex => quote! { ::zfmt::FormatType::LowerHex },

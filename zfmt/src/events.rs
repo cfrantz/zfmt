@@ -4,7 +4,7 @@
 //! derive macro generates `::zfmt::` absolute paths, which cannot resolve from
 //! within the `zfmt` crate itself.
 
-use crate::{Format, FormatSpec, FormatType, Align, Write, Error, leb128, ZfmtEvent};
+use crate::{Format, FormatInto, FormatSpec, FormatType, Align, Write, Error, leb128, ZfmtEvent};
 
 // ---------------------------------------------------------------------------
 // §7.1  Severity
@@ -109,6 +109,8 @@ impl ZfmtEvent for EventHeader {
     }
 }
 
+impl FormatInto for EventHeader {} // no format string — uses default no-op
+
 #[used]
 #[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.640003d2")]
 #[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.640003d2")]
@@ -191,6 +193,8 @@ impl ZfmtEvent for StreamStart {
     }
 }
 
+impl FormatInto for StreamStart {} // no format string — uses default no-op
+
 #[used]
 #[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.9e106a38")]
 #[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.9e106a38")]
@@ -253,6 +257,8 @@ impl ZfmtEvent for DroppedEvents {
     }
 }
 
+impl FormatInto for DroppedEvents {} // no format string — uses default no-op
+
 #[used]
 #[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.e0ee1b4e")]
 #[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.e0ee1b4e")]
@@ -304,7 +310,10 @@ impl<'a> DebugMessage<'a> {
         buf[pos..pos + sb.len()].copy_from_slice(sb);
     }
 
-    pub fn format_into<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
+}
+
+impl<'a> FormatInto for DebugMessage<'a> {
+    fn format_into<W: Write>(&self, writer: &mut W) -> Result<(), Error> {
         writer.write_str(self.message)
     }
 }

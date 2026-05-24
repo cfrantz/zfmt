@@ -1,7 +1,7 @@
 //! Tests for well-known events (§7) and logging macros (§13).
 
 use zfmt::events::{DebugMessage, DroppedEvents, EventHeader, Severity, StreamStart};
-use zfmt::{Format, FormatSpec, Write, Error};
+use zfmt::{Format, FormatInto, FormatSpec, Write, Error};
 
 // ---------------------------------------------------------------------------
 // Writer helper

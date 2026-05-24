@@ -52,6 +52,25 @@ pub trait Format {
 }
 
 // ---------------------------------------------------------------------------
+// FormatInto trait
+
+/// Renders the event as human-readable text (§13.5).
+///
+/// The derive macro generates this impl when the event carries a
+/// `#[zfmt(format = "...")]` attribute.  Events without a format string
+/// receive a no-op default that writes nothing.
+///
+/// This trait enables the `output-text` / `output-both` features to call
+/// `format_into()` without requiring the type to have an inherent method of
+/// the same name.
+pub trait FormatInto {
+    fn format_into<W: Write>(&self, w: &mut W) -> Result<(), Error> {
+        let _ = w;
+        Ok(())
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Private helpers
 
 /// Write `n` copies of `ch` to `w`.

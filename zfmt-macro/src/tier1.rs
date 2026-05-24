@@ -100,7 +100,7 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
         (build_serialize_stmts(fields_syn), false)
     };
 
-    let format_into_impl = crate::format_into::maybe_generate(input)?;
+    let format_into_impl = crate::format_into::generate(input)?;
     let string_section = crate::codegen::gen_string_section(format_str.as_deref());
 
     let tag_lit = tag;
