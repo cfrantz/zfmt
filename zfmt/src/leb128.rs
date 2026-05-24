@@ -1,8 +1,8 @@
 //! Unsigned LEB128 encode/decode for the event stream (§4.4).
 
 /// Encode `value` into `buf`, returning the number of bytes written.
-/// `buf` must be at least 10 bytes long.
-pub fn encode(mut value: u64, buf: &mut [u8]) -> usize {
+/// `buf` must be at least 5 bytes long.
+pub fn encode(mut value: u32, buf: &mut [u8]) -> usize {
     let mut i = 0;
     loop {
         let byte = (value & 0x7f) as u8;
@@ -39,7 +39,7 @@ pub fn decode(buf: &[u8]) -> Option<(u64, usize)> {
 }
 
 /// Return the number of bytes needed to LEB128-encode `value`.
-pub fn encoded_len(mut value: u64) -> usize {
+pub fn encoded_len(mut value: u32) -> usize {
     let mut n = 1usize;
     while value >= 0x80 {
         value >>= 7;
@@ -52,18 +52,18 @@ pub fn encoded_len(mut value: u64) -> usize {
 mod tests {
     use super::*;
 
-    fn roundtrip(v: u64) {
-        let mut buf = [0u8; 10];
+    fn roundtrip(v: u32) {
+        let mut buf = [0u8; 5];
         let n = encode(v, &mut buf);
         let (decoded, consumed) = decode(&buf[..n]).unwrap();
-        assert_eq!(decoded, v, "roundtrip failed for {}", v);
+        assert_eq!(decoded, v as u64, "roundtrip failed for {}", v);
         assert_eq!(consumed, n);
         assert_eq!(n, encoded_len(v));
     }
 
     #[test]
     fn roundtrip_values() {
-        for v in [0u64, 1, 127, 128, 255, 300, 16383, 16384, u32::MAX as u64, u64::MAX] {
+        for v in [0u32, 1, 127, 128, 255, 300, 16383, 16384, u32::MAX] {
             roundtrip(v);
         }
     }
@@ -97,5 +97,6 @@ mod tests {
         assert_eq!(encoded_len(128), 2);
         assert_eq!(encoded_len(16383), 2);
         assert_eq!(encoded_len(16384), 3);
+        assert_eq!(encoded_len(u32::MAX), 5);
     }
 }
