@@ -116,6 +116,8 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
             pub const ZFMT_TAG: u32 = #tag_lit;
             pub const ZFMT_FULL_HASH: u64 = #full_hash_lit;
 
+            pub fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
+
             pub fn payload_size(&self) -> usize {
                 #payload_size_expr
             }

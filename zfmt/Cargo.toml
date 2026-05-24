@@ -8,11 +8,13 @@ rust-version = "1.77"
 zfmt-macro = { path = "../zfmt-macro" }
 
 [features]
-# Minimum severity level emitted (default: info)
-log-level-trace = []
-log-level-debug = []
-log-level-info  = []
-log-level-warn  = []
+# Minimum severity level emitted (default: info).
+# Each level implies all levels above it.
+default = ["log-level-info"]
+log-level-trace = ["log-level-debug"]
+log-level-debug = ["log-level-info"]
+log-level-info  = ["log-level-warn"]
+log-level-warn  = ["log-level-error"]
 log-level-error = []
 
 # Output mode (default: binary)
