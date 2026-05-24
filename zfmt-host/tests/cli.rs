@@ -76,6 +76,14 @@ fn cli_ingest_companion_export() {
         text.contains("temp celsius_x10="),
         "TempReading format missing from export:\n{text}"
     );
+    assert!(
+        text.contains("alert critical code="),
+        "Alert::Critical format missing from export:\n{text}"
+    );
+    assert!(
+        text.contains("named label="),
+        "NamedEvent format missing from export:\n{text}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -131,6 +139,22 @@ fn cli_decode_rendered_output() {
     assert!(
         decoded.contains("temp celsius_x10=215 sensor=3"),
         "TempReading not rendered:\n{decoded}"
+    );
+    assert!(
+        decoded.contains("alert critical code=42"),
+        "Alert::Critical not rendered:\n{decoded}"
+    );
+    assert!(
+        decoded.contains("alert warning"),
+        "Alert::Warning not rendered:\n{decoded}"
+    );
+    assert!(
+        decoded.contains("firmware node"),
+        "NamedEvent label not resolved:\n{decoded}"
+    );
+    assert!(
+        decoded.contains("debug note seq=7"),
+        "unstructured log not rendered:\n{decoded}"
     );
 }
 

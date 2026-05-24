@@ -204,6 +204,32 @@ fn pipeline_no_format_string_fallback() {
 }
 
 // ---------------------------------------------------------------------------
+// §9.6b — STRING_REF field: hash looked up in string table
+
+#[test]
+fn pipeline_string_ref_field_rendered() {
+    let dir = TempDir::new().unwrap();
+    // Bytecode for a one-field event: STRING_REF/single + END
+    // STRING_REF opcode = (16 << 3) | 0 = 0x80
+    let tag:     u32  = 0xaabbcc11;
+    let fmth:    u32  = 0x12345678;
+    let bc:      &[u8] = &[0x80, 0x00];
+    let str_hash: u32 = 0xdeadbeef;
+    let db = make_db(
+        &dir,
+        &[(tag, tag as u64, fmth, bc)],
+        &[
+            (fmth,     "{label}"),
+            (str_hash, "my interned string"),
+        ],
+    );
+
+    // Payload: u32 LE hash
+    let output = decode_to_string(&frame(tag, &str_hash.to_le_bytes()), db);
+    assert!(output.contains("my interned string"), "got: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
 // §9.7 — multiple events in one stream, all rendered
 
 #[test]
