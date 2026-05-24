@@ -77,6 +77,7 @@ pub fn item_type_for(canonical: &str) -> Option<u8> {
         "f32" => Some(item::F32),
         "f64" => Some(item::F64),
         "bool" => Some(item::BOOL),
+        "ZfmtStr" => Some(item::STRING_REF),
         _ => None,
     }
 }
@@ -86,7 +87,7 @@ pub fn size_of_canonical(canonical: &str) -> Option<usize> {
     match canonical {
         "u8" | "i8" | "bool" => Some(1),
         "u16" | "i16" => Some(2),
-        "u32" | "i32" | "f32" => Some(4),
+        "u32" | "i32" | "f32" | "ZfmtStr" => Some(4),
         "u64" | "i64" | "f64" => Some(8),
         _ => None,
     }

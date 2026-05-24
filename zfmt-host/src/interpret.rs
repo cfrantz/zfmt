@@ -835,6 +835,34 @@ mod tests {
         assert!(render("{a} {b}", &[Value::U32(1)]).is_err());
     }
 
+    // --- STRING_REF instruction ---
+
+    #[test]
+    fn interpret_string_ref_known() {
+        use crate::elf::StringEntry;
+        // Bytecode: STRING_REF/single END
+        // STRING_REF opcode = (16 << 3) | 0 = 0x80
+        let bc = &[0x80u8, 0x00];
+        let hash: u32 = 0xDEAD_BEEF;
+        let payload = hash.to_le_bytes();
+        let mut db = Db::memory().unwrap();
+        db.ingest(&[], &[StringEntry { hash, content: "my label".to_owned() }], 0).unwrap();
+        let vals = interpret(bc, &payload, &db).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert!(matches!(&vals[0], Value::Str(s) if s == "my label"));
+    }
+
+    #[test]
+    fn interpret_string_ref_unknown() {
+        // STRING_REF with hash not in the database → fallback placeholder.
+        let bc = &[0x80u8, 0x00];
+        let hash: u32 = 0x1234_5678;
+        let payload = hash.to_le_bytes();
+        let vals = interpret(bc, &payload, &db()).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert!(matches!(&vals[0], Value::Str(s) if s.contains("12345678")));
+    }
+
     // --- CALL subroutine ---
 
     #[test]

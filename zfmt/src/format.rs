@@ -351,6 +351,47 @@ impl<'a> Format for &'a str {
 }
 
 // ---------------------------------------------------------------------------
+// ZfmtStr
+
+/// A compile-time interned string handle (§4.7).
+///
+/// Created by `zfmt_str!("literal")`, which interns the string into the
+/// `.zfmt_strings` linker section and evaluates to the corresponding `u32`
+/// FNV-1a hash.  On the wire the hash is transmitted as a `u32`; the host
+/// decoder resolves it back to the original string via the string table.
+///
+/// The firmware cannot resolve string hashes, so `Format` renders the hash
+/// in hexadecimal as a fallback when `output-text` mode is active.
+#[repr(transparent)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct ZfmtStr(pub u32);
+
+impl ZfmtStr {
+    pub const fn new(hash: u32) -> Self {
+        Self(hash)
+    }
+}
+
+impl From<u32> for ZfmtStr {
+    fn from(h: u32) -> Self {
+        Self(h)
+    }
+}
+
+impl Format for ZfmtStr {
+    fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
+        let hex_spec = FormatSpec {
+            ty: FormatType::LowerHex,
+            alternate: true,
+            zero_pad: true,
+            width: 10, // "0x" + 8 hex digits
+            ..spec
+        };
+        fmt_uint(w, self.0 as u64, hex_spec, false)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 
 #[cfg(test)]
