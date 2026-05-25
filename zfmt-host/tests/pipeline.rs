@@ -230,6 +230,181 @@ fn pipeline_string_ref_field_rendered() {
 }
 
 // ---------------------------------------------------------------------------
+// §9.6c — StreamStart sets tick rate; EventHeader timestamps are scaled
+
+const SS_TAG:  u32   = 0x9e106a38;  // StreamStart::ZFMT_TAG
+const HDR_TAG2: u32  = HDR_TAG;     // alias for clarity below
+
+#[test]
+fn pipeline_stream_start_scales_timestamps() {
+    let dir = TempDir::new().unwrap();
+    let fmt_hash: u32 = 0x99887766;
+    let db = make_db(
+        &dir,
+        &[
+            // StreamStart: protocol_version U16/single, SKIP/fa 6, tick_rate U64/single,
+            //              firmware_build_id U64/single, END
+            // Opcodes: U16=0x10, SKIP_fa=0x51 0x06, U64=0x20, U64=0x20, END=0x00
+            (SS_TAG,   SS_TAG as u64,   0,         &[0x10u8, 0x51, 0x06, 0x20, 0x20, 0x00]),
+            (HDR_TAG2, HDR_FH,          fmt_hash,  HDR_BC),
+        ],
+        &[(fmt_hash, "{timestamp} {severity}")],
+    );
+
+    // StreamStart payload: protocol_version=1, _pad0=[0;6], tick_rate_hz=1_000_000,
+    //                      firmware_build_id=0
+    let mut ss_payload = vec![0u8; 24];
+    ss_payload[..2].copy_from_slice(&1u16.to_le_bytes());
+    ss_payload[8..16].copy_from_slice(&1_000_000u64.to_le_bytes());
+
+    // EventHeader: timestamp = 500_000 ticks → 0.500000 s
+    let mut hdr_payload = vec![0u8; 16];
+    hdr_payload[..8].copy_from_slice(&500_000u64.to_le_bytes());
+    hdr_payload[8] = 2; // Info
+
+    let mut stream = frame(SS_TAG, &ss_payload);
+    stream.extend_from_slice(&frame(HDR_TAG2, &hdr_payload));
+
+    let output = decode_to_string(&stream, db);
+    assert!(output.contains("0.500000"), "expected scaled timestamp: {output:?}");
+}
+
+// ---------------------------------------------------------------------------
+// §9.6d — StreamStart → EventHeader + event → DroppedEvents sequence
+
+#[test]
+fn pipeline_well_known_event_sequence() {
+    let dir = TempDir::new().unwrap();
+    const DE_TAG:  u32 = 0xe0ee1b4e;
+    const DE_FH:   u64 = 0xcb0b57d1e0ee1b4e;
+    const DE_BC:   &[u8] = &[0x18u8, 0x51, 0x04, 0x00]; // U32/single, SKIP/fa 4, END
+    let fmt_ss: u32 = 0x1111_0000;
+    let fmt_hdr: u32 = 0x2222_0000;
+    let fmt_de: u32 = 0x3333_0000;
+    let db = make_db(
+        &dir,
+        &[
+            (SS_TAG,   SS_TAG as u64,  fmt_ss,  &[0x10u8, 0x51, 0x06, 0x20, 0x20, 0x00]),
+            (HDR_TAG,  HDR_FH,         fmt_hdr, HDR_BC),
+            (DM_TAG,   DM_FH,          DM_FMTH, DM_BC),
+            (DE_TAG,   DE_FH,          fmt_de,  DE_BC),
+        ],
+        &[
+            (fmt_ss,  "stream start tick_rate={1}"),
+            (fmt_hdr, "{timestamp} {severity}"),
+            (DM_FMTH, "{message}"),
+            (fmt_de,  "dropped count={0}"),
+        ],
+    );
+
+    let mut ss_payload = vec![0u8; 24];
+    ss_payload[..2].copy_from_slice(&1u16.to_le_bytes());
+    ss_payload[8..16].copy_from_slice(&1_000u64.to_le_bytes()); // 1 kHz
+
+    let mut hdr_payload = vec![0u8; 16];
+    hdr_payload[..8].copy_from_slice(&1_000u64.to_le_bytes()); // 1.0 s at 1kHz
+    hdr_payload[8] = 2;
+
+    let mut msg_payload = vec![2u8];
+    msg_payload.extend_from_slice(b"hi");
+
+    let mut de_payload = vec![0u8; 8];
+    de_payload[..4].copy_from_slice(&3u32.to_le_bytes());
+
+    let mut stream = frame(SS_TAG, &ss_payload);
+    stream.extend_from_slice(&frame(HDR_TAG, &hdr_payload));
+    stream.extend_from_slice(&frame(DM_TAG, &msg_payload));
+    stream.extend_from_slice(&frame(DE_TAG, &de_payload));
+
+    let output = decode_to_string(&stream, db);
+    let lines: Vec<&str> = output.lines().collect();
+    assert_eq!(lines.len(), 4, "expected 4 lines:\n{output}");
+    assert!(lines[0].contains("stream start"), "line 0: {}", lines[0]);
+    assert!(lines[1].contains("1.000000"), "EventHeader scaled ts: {}", lines[1]);
+    assert!(lines[2].contains("hi"), "DebugMessage: {}", lines[2]);
+    assert!(lines[3].contains("dropped count=3"), "DroppedEvents: {}", lines[3]);
+}
+
+// ---------------------------------------------------------------------------
+// §9.6e — DISPATCH instruction: inline enum field decoded end-to-end
+//
+// The outer event's format string references the dispatch-produced values
+// positionally.  Both variants here produce exactly one U32 value so the
+// same format string works for both.
+
+#[test]
+fn pipeline_dispatch_inline_enum() {
+    // Inline enum (repr u8), both variants produce a single U32 value:
+    //   Variant 0 → subroutine 0xAABB: U32/single + END  (e.g., "ok code")
+    //   Variant 1 → subroutine 0xCCDD: U32/single + END  (e.g., "fault code")
+    let ok_tag:    u32 = 0xAABB;
+    let fault_tag: u32 = 0xCCDD;
+    let fmt_ok:    u32 = 0x1001;
+    let fmt_fault: u32 = 0x1002;
+    let fmt_outer: u32 = 0x2000;
+
+    let leb = |n: u32| -> Vec<u8> {
+        let mut v = Vec::new();
+        let mut x = n as u64;
+        loop { let b = (x & 0x7f) as u8; x >>= 7;
+               if x == 0 { v.push(b); break; } else { v.push(b | 0x80); } }
+        v
+    };
+
+    // DISPATCH bytecode: opcode=0x70, discrim=U8(1), padding=0, count=2,
+    //                    (0, ok_tag), (1, fault_tag), END
+    let mut dispatch_bc = vec![0x70u8, 0x01, 0x00, 0x02];
+    dispatch_bc.push(0x00); dispatch_bc.extend(leb(ok_tag));
+    dispatch_bc.push(0x01); dispatch_bc.extend(leb(fault_tag));
+    dispatch_bc.push(0x00); // END
+
+    let outer_tag: u32 = 0x5566;
+
+    // Build and test Ok path.
+    let dir = TempDir::new().unwrap();
+    let db = make_db(
+        &dir,
+        &[
+            (outer_tag, outer_tag as u64, fmt_outer, dispatch_bc.as_slice()),
+            (ok_tag,    ok_tag as u64,    fmt_ok,    &[0x18u8, 0x00]), // U32/single + END
+            (fault_tag, fault_tag as u64, fmt_fault, &[0x18u8, 0x00]), // U32/single + END
+        ],
+        &[
+            (fmt_outer, "result={0}"),
+            (fmt_ok,    "ok val={0}"),
+            (fmt_fault, "fault code={0}"),
+        ],
+    );
+    // Discriminant=0 (ok_tag), then u32 payload = 7
+    let mut ok_payload = vec![0u8];
+    ok_payload.extend_from_slice(&7u32.to_le_bytes());
+    let out_ok = decode_to_string(&frame(outer_tag, &ok_payload), db);
+    // The outer format "result={0}" references the single U32 value from the
+    // dispatch subroutine (7).
+    assert!(out_ok.contains("result=7"), "Ok dispatch: {out_ok:?}");
+
+    // Build and test Fault path.
+    let dir2 = TempDir::new().unwrap();
+    let db2 = make_db(
+        &dir2,
+        &[
+            (outer_tag, outer_tag as u64, fmt_outer, dispatch_bc.as_slice()),
+            (ok_tag,    ok_tag as u64,    fmt_ok,    &[0x18u8, 0x00]),
+            (fault_tag, fault_tag as u64, fmt_fault, &[0x18u8, 0x00]),
+        ],
+        &[
+            (fmt_outer, "result={0}"),
+            (fmt_ok,    "ok val={0}"),
+            (fmt_fault, "fault code={0}"),
+        ],
+    );
+    let mut fault_payload = vec![1u8];
+    fault_payload.extend_from_slice(&99u32.to_le_bytes());
+    let out_fault = decode_to_string(&frame(outer_tag, &fault_payload), db2);
+    assert!(out_fault.contains("result=99"), "Fault dispatch: {out_fault:?}");
+}
+
+// ---------------------------------------------------------------------------
 // §9.7 — multiple events in one stream, all rendered
 
 #[test]
