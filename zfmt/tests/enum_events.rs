@@ -17,6 +17,7 @@ fn decode_leb128(buf: &[u8]) -> (u64, usize) {
 
 // ---- Top-level enums -------------------------------------------------------
 
+#[cfg(not(feature = "no-float"))]
 #[derive(Zfmt)]
 pub enum Sensor {
     #[zfmt(format = "temperature={celsius}")]
@@ -49,6 +50,7 @@ pub enum Log<'a> {
 }
 
 // Tuple variants
+#[cfg(not(feature = "no-float"))]
 #[derive(Zfmt)]
 pub enum Point {
     #[zfmt(format = "2d x={0} y={1}")]
@@ -78,6 +80,7 @@ pub enum Status {
 
 // --- Top-level enum tags
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn toplevel_tags_nonzero() {
     assert_ne!(Sensor::TEMPERATURE_ZFMT_TAG, 0);
@@ -85,6 +88,7 @@ fn toplevel_tags_nonzero() {
     assert_ne!(Sensor::RESET_ZFMT_TAG, 0);
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn toplevel_tags_distinct() {
     assert_ne!(Sensor::TEMPERATURE_ZFMT_TAG, Sensor::PRESSURE_ZFMT_TAG);
@@ -92,12 +96,14 @@ fn toplevel_tags_distinct() {
     assert_ne!(Sensor::PRESSURE_ZFMT_TAG,    Sensor::RESET_ZFMT_TAG);
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn toplevel_full_hash_lower32_is_tag() {
     assert_eq!(Sensor::TEMPERATURE_ZFMT_TAG, Sensor::TEMPERATURE_ZFMT_FULL_HASH as u32);
     assert_eq!(Sensor::PRESSURE_ZFMT_TAG,    Sensor::PRESSURE_ZFMT_FULL_HASH as u32);
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn zfmt_tag_matches_const() {
     assert_eq!(Sensor::Temperature { celsius: 0.0 }.zfmt_tag(), Sensor::TEMPERATURE_ZFMT_TAG);
@@ -107,18 +113,21 @@ fn zfmt_tag_matches_const() {
 
 // --- Payload size
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn payload_size_temperature() {
     // f32 = 4 bytes
     assert_eq!(Sensor::Temperature { celsius: 1.0 }.payload_size(), 4);
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn payload_size_pressure() {
     // u32 = 4 bytes
     assert_eq!(Sensor::Pressure { pascals: 1 }.payload_size(), 4);
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn payload_size_reset() {
     // unit variant — no fields
@@ -134,6 +143,7 @@ fn payload_size_tier2_variant() {
 
 // --- Serialize
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn serialize_temperature() {
     let v = Sensor::Temperature { celsius: 1.5 };
@@ -142,6 +152,7 @@ fn serialize_temperature() {
     assert_eq!(&buf, &1.5f32.to_le_bytes());
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn serialize_pressure() {
     let v = Sensor::Pressure { pascals: 0xDEAD_BEEF };
@@ -150,6 +161,7 @@ fn serialize_pressure() {
     assert_eq!(&buf, &0xDEAD_BEEFu32.to_le_bytes());
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn serialize_reset_empty() {
     let v = Sensor::Reset;
@@ -167,6 +179,7 @@ fn serialize_tier2_text() {
     assert_eq!(&buf[n..n + 2], b"hi");
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn serialize_tuple_variant() {
     let v = Point::D2(1.0, 2.0);
@@ -178,6 +191,7 @@ fn serialize_tuple_variant() {
 
 // --- Format into
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn format_temperature() {
     let mut w = w();
@@ -185,6 +199,7 @@ fn format_temperature() {
     assert_eq!(w.0, "temperature=23.500000");
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn format_pressure() {
     let mut w = w();
@@ -192,6 +207,7 @@ fn format_pressure() {
     assert_eq!(w.0, "pressure=101325");
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn format_reset_empty() {
     let mut w = w();
@@ -206,6 +222,7 @@ fn format_tier2_text() {
     assert_eq!(w.0, "msg=hello world");
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn format_tuple_variant() {
     let mut w = w();
@@ -229,6 +246,7 @@ fn inline_enum_variant_tags_nonzero() {
     assert_ne!(Priority::LOW_ZFMT_TAG, Priority::HIGH_ZFMT_TAG);
 }
 
+#[cfg(not(feature = "no-float"))]
 #[test]
 fn inline_enum_tags_differ_from_toplevel() {
     // Inline enum variant tags must not clash with top-level variant tags.

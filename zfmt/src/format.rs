@@ -209,9 +209,7 @@ fn pow10(n: usize) -> u64 {
     v
 }
 
-/// Format an f64 value.  Handles NaN, infinity, and finite values with
-/// optional precision (decimal places).  Alignment is applied to the
-/// complete rendered string.
+#[cfg(not(feature = "no-float"))]
 fn fmt_float<W: Write>(w: &mut W, value: f64, spec: FormatSpec) -> Result<(), Error> {
     if value.is_nan() {
         return fmt_str_value(w, "NaN", spec);
@@ -312,12 +310,14 @@ macro_rules! impl_fmt_sint {
 impl_fmt_uint!(u8, u16, u32, u64);
 impl_fmt_sint!((i8, u8), (i16, u16), (i32, u32), (i64, u64));
 
+#[cfg(not(feature = "no-float"))]
 impl Format for f32 {
     fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
         fmt_float(w, *self as f64, spec)
     }
 }
 
+#[cfg(not(feature = "no-float"))]
 impl Format for f64 {
     fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
         fmt_float(w, *self, spec)
@@ -538,6 +538,7 @@ mod tests {
 
     // --- floats ---
 
+    #[cfg(not(feature = "no-float"))]
     #[test]
     fn float_default_precision() {
         // Default 6 decimal places
@@ -545,6 +546,7 @@ mod tests {
         assert!(s.starts_with("3.14159"), "got {s}");
     }
 
+    #[cfg(not(feature = "no-float"))]
     #[test]
     fn float_precision() {
         let s = FormatSpec { precision: Some(2), ..spec() };
@@ -553,6 +555,7 @@ mod tests {
         assert_eq!(render(0.0f64,     s), "0.00");
     }
 
+    #[cfg(not(feature = "no-float"))]
     #[test]
     fn float_zero_precision() {
         let s = FormatSpec { precision: Some(0), ..spec() };
@@ -560,12 +563,14 @@ mod tests {
         assert_eq!(render(3.0f64,  s), "3");
     }
 
+    #[cfg(not(feature = "no-float"))]
     #[test]
     fn float_negative() {
         let s = FormatSpec { precision: Some(2), ..spec() };
         assert_eq!(render(-1.5f64, s), "-1.50");
     }
 
+    #[cfg(not(feature = "no-float"))]
     #[test]
     fn float_special() {
         assert_eq!(render(f64::NAN,           spec()), "NaN");
@@ -573,6 +578,7 @@ mod tests {
         assert_eq!(render(f64::NEG_INFINITY,  spec()), "-inf");
     }
 
+    #[cfg(not(feature = "no-float"))]
     #[test]
     fn float_sign_flag() {
         let s = FormatSpec { sign: true, precision: Some(1), ..spec() };
@@ -580,6 +586,7 @@ mod tests {
         assert_eq!(render(-1.0f64, s), "-1.0");
     }
 
+    #[cfg(not(feature = "no-float"))]
     #[test]
     fn float_alignment() {
         let r = FormatSpec { align: Align::Right, width: 8, precision: Some(2), ..spec() };
