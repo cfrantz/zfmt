@@ -863,6 +863,86 @@ mod tests {
         assert!(matches!(&vals[0], Value::Str(s) if s.contains("12345678")));
     }
 
+    // --- DISPATCH instruction ---
+
+    #[test]
+    fn interpret_dispatch_matching_variant() {
+        use crate::elf::EventEntry;
+        // Inline enum: repr(u8), two variants
+        //   Low = 0 → subroutine tag 0x1111 (payload: U8/single + END = [0x08, 0x00])
+        //   High = 1 → subroutine tag 0x2222 (payload: U32/single + END = [0x18, 0x00])
+        //
+        // DISPATCH bytecode:
+        //   opcode: (14<<3)|0 = 0x70
+        //   discrim_type LEB128: U8=1 → 0x01
+        //   padding LEB128: 0 → 0x00
+        //   count LEB128: 2 → 0x02
+        //   (val=0 LEB128, tag=0x1111 LEB128): 0x00, 0x91,0x22 (0x1111=4369)
+        //   (val=1 LEB128, tag=0x2222 LEB128): 0x01, 0xa2,0x44 (0x2222=8738)
+        //   END: 0x00
+        //
+        // LEB128(0x1111=4369): 4369 = 0x1111; low7=0x11|0x80=0x91, next=0x22
+        // LEB128(0x2222=8738): 8738 = 0x2222; low7=0x22|0x80=0xa2, next=0x44
+        let low_tag:  u32 = 0x1111;
+        let high_tag: u32 = 0x2222;
+
+        let mut db = Db::memory().unwrap();
+        db.ingest(&[
+            EventEntry { tag: low_tag,  full_hash: low_tag as u64,  format_hash: 0,
+                         bytecode: vec![0x08, 0x00] }, // U8/single + END
+            EventEntry { tag: high_tag, full_hash: high_tag as u64, format_hash: 0,
+                         bytecode: vec![0x18, 0x00] }, // U32/single + END
+        ], &[], 0).unwrap();
+
+        // Build dispatch bytecode with the computed LEB128 values.
+        let leb = |n: u32| -> Vec<u8> {
+            let mut v = Vec::new();
+            let mut x = n as u64;
+            loop {
+                let b = (x & 0x7f) as u8;
+                x >>= 7;
+                if x == 0 { v.push(b); break; } else { v.push(b | 0x80); }
+            }
+            v
+        };
+        let mut bc = vec![0x70u8]; // DISPATCH/single
+        bc.push(0x01); // discrim_type = U8
+        bc.push(0x00); // padding = 0
+        bc.push(0x02); // count = 2
+        bc.push(0x00); bc.extend_from_slice(&leb(low_tag));  // val=0, tag=low_tag
+        bc.push(0x01); bc.extend_from_slice(&leb(high_tag)); // val=1, tag=high_tag
+        bc.push(0x00); // END
+
+        // Dispatch on discriminant = 0 (Low variant) → U8/single → value 42
+        let payload_low = [0u8, 42u8]; // discriminant=0, then Low's payload (u8=42)
+        let vals = interpret(&bc, &payload_low, &db).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert!(matches!(vals[0], Value::U8(42)));
+
+        // Dispatch on discriminant = 1 (High variant) → U32/single → value 0xCAFE
+        let mut payload_high = vec![1u8];
+        payload_high.extend_from_slice(&0x0000_CAFEu32.to_le_bytes());
+        let vals = interpret(&bc, &payload_high, &db).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert!(matches!(vals[0], Value::U32(0xCAFE)));
+    }
+
+    #[test]
+    fn interpret_dispatch_unknown_discriminant() {
+        // Unknown discriminant → placeholder string, no bytes consumed for variant body.
+        let mut bc = vec![0x70u8]; // DISPATCH/single
+        bc.push(0x01); // discrim_type = U8
+        bc.push(0x00); // padding = 0
+        bc.push(0x01); // count = 1
+        bc.push(0x00); bc.extend(b"\x00"); // val=0, tag=0
+        bc.push(0x00); // END
+
+        let payload = [0x99u8]; // discriminant = 0x99 — no entry in table
+        let vals = interpret(&bc, &payload, &db()).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert!(matches!(&vals[0], Value::Str(s) if s.contains("153"))); // 0x99 = 153
+    }
+
     // --- CALL subroutine ---
 
     #[test]
