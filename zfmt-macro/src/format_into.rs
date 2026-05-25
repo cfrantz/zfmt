@@ -7,11 +7,11 @@
 
 use proc_macro2::TokenStream;
 use quote::quote;
-use syn::{spanned::Spanned, DeriveInput, Fields};
+use syn::{spanned::Spanned, DeriveInput, Fields, Type};
 
 use crate::{
     fmtstr::{parse_format_str, Align, FmtType, ParsedSpec, Segment},
-    parse::{extract_format_str, parse_fields},
+    parse::{extract_format_str, is_nested_zfmt_type, parse_fields},
 };
 
 /// Generate the `impl ::zfmt::FormatInto` block for a derived type.
@@ -99,11 +99,37 @@ fn segment_to_stmt(seg: &Segment, fields: &Fields) -> syn::Result<TokenStream> {
         }),
         Segment::Placeholder(ph) => {
             let field_access = field_access_expr(&ph.name, fields)?;
-            let spec_expr = spec_to_expr(&ph.spec);
-            Ok(quote! {
-                ::zfmt::Format::fmt(&#field_access, writer, #spec_expr)?;
-            })
+            // Nested Zfmt types implement FormatInto, not Format; call format_into.
+            if field_ty_for_name(&ph.name, fields)
+                .map(is_nested_zfmt_type)
+                .unwrap_or(false)
+            {
+                Ok(quote! {
+                    ::zfmt::FormatInto::format_into(&#field_access, writer)?;
+                })
+            } else {
+                let spec_expr = spec_to_expr(&ph.spec);
+                Ok(quote! {
+                    ::zfmt::Format::fmt(&#field_access, writer, #spec_expr)?;
+                })
+            }
         }
+    }
+}
+
+/// Look up the syn::Type of a field by name (or tuple index string).
+fn field_ty_for_name<'a>(name: &str, fields: &'a Fields) -> Option<&'a Type> {
+    match fields {
+        Fields::Named(named) => named
+            .named
+            .iter()
+            .find(|f| f.ident.as_ref().map(|i| i == name).unwrap_or(false))
+            .map(|f| &f.ty),
+        Fields::Unnamed(unnamed) => {
+            let idx = name.parse::<usize>().ok()?;
+            unnamed.unnamed.iter().nth(idx).map(|f| &f.ty)
+        }
+        Fields::Unit => None,
     }
 }
 

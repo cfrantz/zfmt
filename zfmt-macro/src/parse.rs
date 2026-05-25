@@ -136,6 +136,28 @@ pub fn is_padding_field(field: &Field) -> bool {
         .unwrap_or(false)
 }
 
+/// Returns true if `ty` is a nested `#[derive(Zfmt)]` struct type that should
+/// be referenced via the CALL bytecode instruction.
+///
+/// Covers simple path types (`SomeName`) that are not known primitives, special
+/// types (`ZfmtStr`, `ZfmtU64`), `&str`, or fixed arrays.
+pub fn is_nested_zfmt_type(ty: &Type) -> bool {
+    let canon = canonical_type_str(ty);
+    if crate::bytecode::item_type_for(&canon).is_some() {
+        return false;
+    }
+    if crate::bytecode::size_of_canonical(&canon).is_some() {
+        return false;
+    }
+    if canon == "str" {
+        return false;
+    }
+    if matches!(ty, Type::Array(_) | Type::Reference(_)) {
+        return false;
+    }
+    matches!(ty, Type::Path(_))
+}
+
 #[allow(dead_code)]
 pub fn parse_struct(input: &DeriveInput) -> syn::Result<ParsedInput> {
     let name = input.ident.to_string();
