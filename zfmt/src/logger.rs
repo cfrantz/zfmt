@@ -1,10 +1,12 @@
 //! Logger trait and adapters for firmware-side event transport.
 
+use crate::format::ZfmtU64;
+
 /// Primary logger interface — implemented by the console task's static LOGGER.
 ///
 /// Static dispatch throughout: no `dyn Logger`, enabling static stack analysis.
 pub trait Logger {
-    fn timestamp(&self) -> u64;
+    fn timestamp(&self) -> ZfmtU64;
 
     /// Send a gather-write list of byte slices as a single logical message.
     fn send_vectored(&mut self, bufs: &[&[u8]]);
@@ -17,7 +19,7 @@ pub trait Logger {
 
 /// Implemented by tasks whose IPC layer only supports flat (contiguous) sends.
 pub trait FlatSend {
-    fn timestamp(&self) -> u64;
+    fn timestamp(&self) -> ZfmtU64;
     fn send(&mut self, data: &[u8]);
 }
 
@@ -43,7 +45,7 @@ impl<L: FlatSend, const N: usize> FlatAdapter<L, N> {
 }
 
 impl<L: FlatSend, const N: usize> Logger for FlatAdapter<L, N> {
-    fn timestamp(&self) -> u64 {
+    fn timestamp(&self) -> ZfmtU64 {
         self.inner.timestamp()
     }
 
@@ -88,8 +90,8 @@ mod tests {
     }
 
     impl FlatSend for MockFlat {
-        fn timestamp(&self) -> u64 {
-            self.ts
+        fn timestamp(&self) -> ZfmtU64 {
+            ZfmtU64::from_u64(self.ts)
         }
 
         fn send(&mut self, data: &[u8]) {
@@ -115,7 +117,7 @@ mod tests {
     #[test]
     fn flat_adapter_timestamp_forwarded() {
         let adapter = FlatAdapter::<_, 64>::new(MockFlat::new(999));
-        assert_eq!(adapter.timestamp(), 999);
+        assert_eq!(adapter.timestamp(), ZfmtU64::from_u64(999));
     }
 
     #[test]

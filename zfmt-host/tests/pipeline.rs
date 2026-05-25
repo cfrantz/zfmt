@@ -17,11 +17,11 @@ const DM_FH:    u64    = 0xcef2c6c3a1a6a340;
 const DM_FMTH:  u32    = 0x524fb994;
 const DM_BC:    &[u8]  = &[0x4b, 0x00];
 
-// EventHeader: U64/single, U8/single, SKIP/fa 7, END
-const HDR_TAG:  u32    = 0x640003d2;
-const HDR_FH:   u64    = 0xfb7e523c640003d2;
+// EventHeader: U64_PAIR/single, U8/single, SKIP/fa 3, END
+const HDR_TAG:  u32    = 0x8c73a273;
+const HDR_FH:   u64    = 0x7a35399b8c73a273;
 const HDR_FMTH: u32    = 0x112d69b2;
-const HDR_BC:   &[u8]  = &[0x20, 0x08, 0x51, 0x07, 0x00];
+const HDR_BC:   &[u8]  = &[0x88, 0x08, 0x51, 0x03, 0x00];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,9 +103,10 @@ fn pipeline_header_and_event_pair() {
         ],
     );
 
-    // EventHeader payload: timestamp=42 u64 LE, severity=2 (Info), _pad[7]
-    let mut hdr_payload = vec![0u8; 16];
-    hdr_payload[..8].copy_from_slice(&42u64.to_le_bytes());
+    // EventHeader payload: ZfmtU64{lo=42,hi=0}, severity=2 (Info), _pad[3]
+    let mut hdr_payload = vec![0u8; 12];
+    hdr_payload[..4].copy_from_slice(&42u32.to_le_bytes()); // timestamp lo
+    // timestamp hi = 0
     hdr_payload[8] = 2; // Info
 
     // DebugMessage payload: LEB128(2) + "hi"
@@ -232,7 +233,7 @@ fn pipeline_string_ref_field_rendered() {
 // ---------------------------------------------------------------------------
 // §9.6c — StreamStart sets tick rate; EventHeader timestamps are scaled
 
-const SS_TAG:  u32   = 0x9e106a38;  // StreamStart::ZFMT_TAG
+const SS_TAG:  u32   = 0x0ef1ba00;  // StreamStart::ZFMT_TAG
 const HDR_TAG2: u32  = HDR_TAG;     // alias for clarity below
 
 #[test]
@@ -242,24 +243,24 @@ fn pipeline_stream_start_scales_timestamps() {
     let db = make_db(
         &dir,
         &[
-            // StreamStart: protocol_version U16/single, SKIP/fa 6, tick_rate U64/single,
-            //              firmware_build_id U64/single, END
-            // Opcodes: U16=0x10, SKIP_fa=0x51 0x06, U64=0x20, U64=0x20, END=0x00
-            (SS_TAG,   SS_TAG as u64,   0,         &[0x10u8, 0x51, 0x06, 0x20, 0x20, 0x00]),
+            // StreamStart: U16/single, SKIP/fa 2, U64_PAIR/single, U64_PAIR/single, END
+            (SS_TAG,   SS_TAG as u64,   0,         &[0x10u8, 0x51, 0x02, 0x88, 0x88, 0x00]),
             (HDR_TAG2, HDR_FH,          fmt_hash,  HDR_BC),
         ],
         &[(fmt_hash, "{timestamp} {severity}")],
     );
 
-    // StreamStart payload: protocol_version=1, _pad0=[0;6], tick_rate_hz=1_000_000,
-    //                      firmware_build_id=0
-    let mut ss_payload = vec![0u8; 24];
+    // StreamStart payload: protocol_version=1, _pad0=[0;2], tick_rate_hz=ZfmtU64(1_000_000),
+    //                      firmware_build_id=ZfmtU64(0)
+    let mut ss_payload = vec![0u8; 20];
     ss_payload[..2].copy_from_slice(&1u16.to_le_bytes());
-    ss_payload[8..16].copy_from_slice(&1_000_000u64.to_le_bytes());
+    ss_payload[4..8].copy_from_slice(&1_000_000u32.to_le_bytes());   // tick_rate_hz lo
+    // tick_rate_hz hi = 0 (already zero)
 
     // EventHeader: timestamp = 500_000 ticks → 0.500000 s
-    let mut hdr_payload = vec![0u8; 16];
-    hdr_payload[..8].copy_from_slice(&500_000u64.to_le_bytes());
+    let mut hdr_payload = vec![0u8; 12];
+    hdr_payload[..4].copy_from_slice(&500_000u32.to_le_bytes());  // timestamp lo
+    // timestamp hi = 0
     hdr_payload[8] = 2; // Info
 
     let mut stream = frame(SS_TAG, &ss_payload);
@@ -284,7 +285,7 @@ fn pipeline_well_known_event_sequence() {
     let db = make_db(
         &dir,
         &[
-            (SS_TAG,   SS_TAG as u64,  fmt_ss,  &[0x10u8, 0x51, 0x06, 0x20, 0x20, 0x00]),
+            (SS_TAG,   SS_TAG as u64,  fmt_ss,  &[0x10u8, 0x51, 0x02, 0x88, 0x88, 0x00]),
             (HDR_TAG,  HDR_FH,         fmt_hdr, HDR_BC),
             (DM_TAG,   DM_FH,          DM_FMTH, DM_BC),
             (DE_TAG,   DE_FH,          fmt_de,  DE_BC),
@@ -297,12 +298,12 @@ fn pipeline_well_known_event_sequence() {
         ],
     );
 
-    let mut ss_payload = vec![0u8; 24];
+    let mut ss_payload = vec![0u8; 20];
     ss_payload[..2].copy_from_slice(&1u16.to_le_bytes());
-    ss_payload[8..16].copy_from_slice(&1_000u64.to_le_bytes()); // 1 kHz
+    ss_payload[4..8].copy_from_slice(&1_000u32.to_le_bytes()); // tick_rate_hz lo = 1 kHz
 
-    let mut hdr_payload = vec![0u8; 16];
-    hdr_payload[..8].copy_from_slice(&1_000u64.to_le_bytes()); // 1.0 s at 1kHz
+    let mut hdr_payload = vec![0u8; 12];
+    hdr_payload[..4].copy_from_slice(&1_000u32.to_le_bytes()); // timestamp lo = 1.0 s at 1kHz
     hdr_payload[8] = 2;
 
     let mut msg_payload = vec![2u8];

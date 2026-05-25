@@ -7,9 +7,9 @@ use anyhow::{Context, Result};
 use crate::db::Db;
 use crate::interpret;
 
-// Well-known event tags (§7) — stable, spec-computed FNV-1a hashes.
-const TAG_STREAM_START:  u32 = 0x9e106a38;
-const TAG_EVENT_HEADER:  u32 = 0x640003d2;
+// Well-known event tags (§7) — FNV-1a hashes of the canonical struct definitions.
+const TAG_STREAM_START:  u32 = 0x0ef1ba00;
+const TAG_EVENT_HEADER:  u32 = 0x8c73a273;
 
 /// Decode a binary stream, writing one line per frame to `out`.
 ///
@@ -60,8 +60,12 @@ pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write) -> 
         });
 
         // Extract tick_rate_hz from StreamStart before generic decode.
-        if tag == TAG_STREAM_START && payload.len() >= 16 {
-            tick_rate_hz = u64::from_le_bytes(payload[8..16].try_into().unwrap());
+        // StreamStart layout: u16(2) + _pad(2) + ZfmtU64{lo,hi}(8) + ...
+        // tick_rate_hz lo is at [4..8], hi at [8..12].
+        if tag == TAG_STREAM_START && payload.len() >= 12 {
+            let lo = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as u64;
+            let hi = u32::from_le_bytes(payload[8..12].try_into().unwrap()) as u64;
+            tick_rate_hz = (hi << 32) | lo;
         }
 
         match result {
@@ -235,18 +239,22 @@ mod tests {
         assert_eq!(s.trim(), "[11111111] world");
     }
 
-    // Helper: build a minimal StreamStart payload (24 bytes, §7.3).
+    // Helper: build a minimal StreamStart payload (20 bytes, §7.3).
+    // Layout: u16(2) + _pad(2) + ZfmtU64{lo,hi}(8) + ZfmtU64{lo,hi}(8) = 20 bytes.
     fn stream_start_payload(tick_rate_hz: u64) -> Vec<u8> {
-        let mut p = vec![0u8; 24];
-        p[..2].copy_from_slice(&1u16.to_le_bytes());       // protocol_version = 1
-        p[8..16].copy_from_slice(&tick_rate_hz.to_le_bytes());
+        let mut p = vec![0u8; 20];
+        p[..2].copy_from_slice(&1u16.to_le_bytes());                        // protocol_version = 1
+        p[4..8].copy_from_slice(&(tick_rate_hz as u32).to_le_bytes());      // tick_rate_hz lo
+        p[8..12].copy_from_slice(&((tick_rate_hz >> 32) as u32).to_le_bytes()); // tick_rate_hz hi
         p
     }
 
-    // Helper: build an EventHeader payload (16 bytes, §7.2).
+    // Helper: build an EventHeader payload (12 bytes, §7.2).
+    // Layout: ZfmtU64{lo,hi}(8) + u8(1) + _pad(3) = 12 bytes.
     fn event_header_payload(timestamp_ticks: u64, severity: u8) -> Vec<u8> {
-        let mut p = vec![0u8; 16];
-        p[..8].copy_from_slice(&timestamp_ticks.to_le_bytes());
+        let mut p = vec![0u8; 12];
+        p[..4].copy_from_slice(&(timestamp_ticks as u32).to_le_bytes());      // timestamp lo
+        p[4..8].copy_from_slice(&((timestamp_ticks >> 32) as u32).to_le_bytes()); // timestamp hi
         p[8] = severity;
         p
     }
@@ -277,7 +285,7 @@ mod tests {
         db.ingest(&[
             EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
                 format_hash: fmt_hash,
-                bytecode: vec![0x20, 0x08, 0x51, 0x07, 0x00] },
+                bytecode: vec![0x88, 0x08, 0x51, 0x03, 0x00] },
         ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
         0).unwrap();
 

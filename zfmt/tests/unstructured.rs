@@ -2,7 +2,7 @@
 
 use std::sync::{Arc, Mutex};
 use zfmt::events::{DebugMessage, EventHeader, Severity};
-use zfmt::{Logger, log_fatal};
+use zfmt::{Logger, ZfmtU64, log_fatal};
 // log_info/log_warn/log_error are imported below only in tests that use them.
 
 // ---------------------------------------------------------------------------
@@ -14,7 +14,7 @@ struct VecLogger {
 }
 
 impl Logger for VecLogger {
-    fn timestamp(&self) -> u64 { self.ts }
+    fn timestamp(&self) -> ZfmtU64 { ZfmtU64::from_u64(self.ts) }
     fn send_vectored(&mut self, bufs: &[&[u8]]) {
         let mut data = vec![];
         for b in bufs { data.extend_from_slice(b); }
@@ -132,8 +132,9 @@ fn unstructured_timestamp_forwarded() {
     log_fatal!(logger, "ts test");
     let pkts = packets.lock().unwrap();
     let (_, hdr_payload, _) = parse_frame(&pkts[0]);
-    let ts = u64::from_le_bytes(hdr_payload[..8].try_into().unwrap());
-    assert_eq!(ts, 77777);
+    let lo = u32::from_le_bytes(hdr_payload[..4].try_into().unwrap()) as u64;
+    let hi = u32::from_le_bytes(hdr_payload[4..8].try_into().unwrap()) as u64;
+    assert_eq!((hi << 32) | lo, 77777);
 }
 
 // ---------------------------------------------------------------------------

@@ -6,7 +6,7 @@
 //! The binary itself is also used as the ELF for `zfmt ingest` (it contains
 //! `.zfmt_events.*` and `.zfmt_strings.*` sections).
 
-use zfmt::{ZfmtStr, events::StreamStart};
+use zfmt::{ZfmtStr, ZfmtU64, events::StreamStart};
 
 // ---------------------------------------------------------------------------
 // Event definitions — all use the real #[derive(Zfmt)] macro
@@ -51,7 +51,7 @@ pub struct NamedEvent {
 struct VecCollect(Vec<u8>);
 
 impl zfmt::FlatSend for VecCollect {
-    fn timestamp(&self) -> u64 { 0 }
+    fn timestamp(&self) -> ZfmtU64 { ZfmtU64::default() }
     fn send(&mut self, data: &[u8]) { self.0.extend_from_slice(data); }
 }
 
@@ -74,9 +74,9 @@ pub fn generate_test_stream() -> Vec<u8> {
     // §7.3: StreamStart is the first event in every stream (bare — no EventHeader).
     zfmt::log_bare_event!(logger, StreamStart {
         protocol_version: StreamStart::PROTOCOL_VERSION,
-        _pad0: [0; 6],
-        tick_rate_hz: TICK_RATE_HZ,
-        firmware_build_id: 0xDEAD_CAFE_0000_0001,
+        _pad0: [0; 2],
+        tick_rate_hz: ZfmtU64::from_u64(TICK_RATE_HZ),
+        firmware_build_id: ZfmtU64::from_u64(0xDEAD_CAFE_0000_0001),
     });
 
     zfmt::log_info!(logger, Heartbeat {

@@ -1,7 +1,7 @@
 //! Tests for well-known events (§7) and logging macros (§13).
 
 use zfmt::events::{DebugMessage, DroppedEvents, EventHeader, Severity, StreamStart};
-use zfmt::{Format, FormatInto, FormatSpec, Write, Error};
+use zfmt::{Format, FormatInto, FormatSpec, Write, Error, ZfmtU64};
 
 // ---------------------------------------------------------------------------
 // Writer helper
@@ -64,37 +64,39 @@ fn event_header_full_hash_lower32_is_tag() {
 
 #[test]
 fn event_header_size() {
-    // §7.2: timestamp(8) + severity(1) + _pad(7) = 16
-    assert_eq!(core::mem::size_of::<EventHeader>(), 16);
-    let hdr = EventHeader::new(0, Severity::Info);
-    assert_eq!(hdr.payload_size(), 16);
+    // §7.2: ZfmtU64(8) + severity(1) + _pad(3) = 12
+    assert_eq!(core::mem::size_of::<EventHeader>(), 12);
+    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info);
+    assert_eq!(hdr.payload_size(), 12);
 }
 
 #[test]
 fn event_header_zfmt_tag_method() {
-    let hdr = EventHeader::new(0, Severity::Info);
+    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info);
     assert_eq!(hdr.zfmt_tag(), EventHeader::ZFMT_TAG);
 }
 
 #[test]
 fn event_header_serialize_roundtrip() {
-    let hdr = EventHeader::new(0xdeadbeefcafe1234, Severity::Warn);
-    let mut buf = [0u8; 16];
+    let ts = ZfmtU64::from_u64(0xdeadbeefcafe1234);
+    let hdr = EventHeader::new(ts, Severity::Warn);
+    let mut buf = [0u8; 12];
     hdr.serialize_into(&mut buf);
-    assert_eq!(&buf[..8], &0xdeadbeefcafe1234u64.to_le_bytes());
+    assert_eq!(&buf[..4], &ts.lo.to_le_bytes());
+    assert_eq!(&buf[4..8], &ts.hi.to_le_bytes());
     assert_eq!(buf[8], Severity::Warn as u8);
-    assert_eq!(&buf[9..16], &[0u8; 7]);
+    assert_eq!(&buf[9..12], &[0u8; 3]);
 }
 
 #[test]
 fn event_header_format_into() {
-    let hdr = EventHeader::new(1000, Severity::Info);
+    let hdr = EventHeader::new(ZfmtU64::from_u64(1000), Severity::Info);
     assert_eq!(render(|w| hdr.format_into(w)), "1000 INFO");
 }
 
 #[test]
 fn event_header_severity_field() {
-    let hdr = EventHeader::new(0, Severity::Fatal);
+    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Fatal);
     assert_eq!(hdr.severity, Severity::Fatal as u8);
 }
 
@@ -113,26 +115,32 @@ fn stream_start_full_hash_lower32_is_tag() {
 
 #[test]
 fn stream_start_size() {
-    // §7.3: protocol_version(2) + _pad0(6) + tick_rate_hz(8) + firmware_build_id(8) = 24
-    assert_eq!(core::mem::size_of::<StreamStart>(), 24);
-    let ss = StreamStart { protocol_version: 1, _pad0: [0;6], tick_rate_hz: 1_000_000, firmware_build_id: 42 };
-    assert_eq!(ss.payload_size(), 24);
+    // §7.3: protocol_version(2) + _pad0(2) + ZfmtU64(8) + ZfmtU64(8) = 20
+    assert_eq!(core::mem::size_of::<StreamStart>(), 20);
+    let ss = StreamStart {
+        protocol_version: 1, _pad0: [0;2],
+        tick_rate_hz: ZfmtU64::from_u64(1_000_000),
+        firmware_build_id: ZfmtU64::from_u64(42),
+    };
+    assert_eq!(ss.payload_size(), 20);
 }
 
 #[test]
 fn stream_start_serialize() {
     let ss = StreamStart {
         protocol_version: 1,
-        _pad0: [0; 6],
-        tick_rate_hz: 1_000_000u64,
-        firmware_build_id: 0xabcdu64,
+        _pad0: [0; 2],
+        tick_rate_hz: ZfmtU64::from_u64(1_000_000u64),
+        firmware_build_id: ZfmtU64::from_u64(0xabcdu64),
     };
-    let mut buf = [0u8; 24];
+    let mut buf = [0u8; 20];
     ss.serialize_into(&mut buf);
     assert_eq!(&buf[..2], &1u16.to_le_bytes());
-    assert_eq!(&buf[2..8], &[0u8; 6]);
-    assert_eq!(&buf[8..16], &1_000_000u64.to_le_bytes());
-    assert_eq!(&buf[16..24], &0xabcdu64.to_le_bytes());
+    assert_eq!(&buf[2..4], &[0u8; 2]);
+    assert_eq!(&buf[4..8],  &(1_000_000u32).to_le_bytes());   // tick_rate_hz lo
+    assert_eq!(&buf[8..12], &0u32.to_le_bytes());              // tick_rate_hz hi
+    assert_eq!(&buf[12..16], &(0xabcdu32).to_le_bytes());      // firmware_build_id lo
+    assert_eq!(&buf[16..20], &0u32.to_le_bytes());             // firmware_build_id hi
 }
 
 // ---------------------------------------------------------------------------
@@ -232,7 +240,7 @@ struct VecLogger {
 }
 
 impl Logger for VecLogger {
-    fn timestamp(&self) -> u64 { self.ts }
+    fn timestamp(&self) -> ZfmtU64 { ZfmtU64::from_u64(self.ts) }
     fn send_vectored(&mut self, bufs: &[&[u8]]) {
         let mut data = std::vec::Vec::new();
         for b in bufs { data.extend_from_slice(b); }
@@ -262,14 +270,15 @@ fn log_info_sends_two_frames() {
     // Packet contains: header frame + event frame
     let (hdr_tag, hdr_payload) = parse_frame(pkt);
     assert_eq!(hdr_tag, EventHeader::ZFMT_TAG);
-    assert_eq!(hdr_payload.len(), 16);
-    // timestamp at bytes 0..8
-    let ts = u64::from_le_bytes(hdr_payload[..8].try_into().unwrap());
-    assert_eq!(ts, 12345);
+    assert_eq!(hdr_payload.len(), 12);
+    // timestamp as ZfmtU64: lo at 0..4, hi at 4..8
+    let lo = u32::from_le_bytes(hdr_payload[..4].try_into().unwrap()) as u64;
+    let hi = u32::from_le_bytes(hdr_payload[4..8].try_into().unwrap()) as u64;
+    assert_eq!((hi << 32) | lo, 12345);
     // severity at byte 8
     assert_eq!(hdr_payload[8], Sev::Info as u8);
     // second frame starts after header frame
-    let hdr_frame_len = 4 + 1 + 16; // tag(4)+LEB128(1)+payload(16)
+    let hdr_frame_len = 4 + 1 + 12; // tag(4)+LEB128(1)+payload(12)
     let (evt_tag, evt_payload) = parse_frame(&pkt[hdr_frame_len..]);
     assert_eq!(evt_tag, DroppedEvents::ZFMT_TAG);
     assert_eq!(&evt_payload[..4], &7u32.to_le_bytes());
@@ -309,7 +318,7 @@ fn log_tier2_debug_message() {
     log_info!(logger, DebugMessage { message: "hello world" });
     let pkts = packets.lock().unwrap();
     let pkt = &pkts[0];
-    let hdr_frame_len = 4 + 1 + 16;
+    let hdr_frame_len = 4 + 1 + 12;
     let (evt_tag, evt_payload) = parse_frame(&pkt[hdr_frame_len..]);
     assert_eq!(evt_tag, DebugMessage::ZFMT_TAG);
     // LEB128(11) = 0x0b, then "hello world"
