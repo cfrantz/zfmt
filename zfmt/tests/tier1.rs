@@ -15,6 +15,7 @@ pub struct Counter {
 // but we can still test that the derive compiles for it as a stub).
 
 // A Tier-1 struct with mixed primitives and a fixed array.
+#[cfg(not(feature = "no-64bit"))]
 #[derive(Zfmt)]
 #[repr(C)]
 pub struct Sensor {
@@ -38,13 +39,16 @@ fn payload_size_equals_size_of() {
     let c = Counter { count: 1, value: -1, _pad: [0; 2] };
     assert_eq!(c.payload_size(), core::mem::size_of::<Counter>());
 
-    let s = Sensor {
-        timestamp: 42,
-        readings: [1, 2, 3, 4],
-        flags: 0,
-        _pad: [0; 7],
-    };
-    assert_eq!(s.payload_size(), core::mem::size_of::<Sensor>());
+    #[cfg(not(feature = "no-64bit"))]
+    {
+        let s = Sensor {
+            timestamp: 42,
+            readings: [1, 2, 3, 4],
+            flags: 0,
+            _pad: [0; 7],
+        };
+        assert_eq!(s.payload_size(), core::mem::size_of::<Sensor>());
+    }
 }
 
 #[test]
@@ -66,10 +70,12 @@ fn serialize_roundtrip() {
 fn tag_is_stable() {
     // The tag must be the same const every time; verify it is nonzero.
     assert_ne!(Counter::ZFMT_TAG, 0);
-    assert_ne!(Sensor::ZFMT_TAG, 0);
     assert_ne!(Annotated::ZFMT_TAG, 0);
+    #[cfg(not(feature = "no-64bit"))]
+    assert_ne!(Sensor::ZFMT_TAG, 0);
 
     // Tags must differ across distinct structs.
+    #[cfg(not(feature = "no-64bit"))]
     assert_ne!(Counter::ZFMT_TAG, Sensor::ZFMT_TAG);
     assert_ne!(Counter::ZFMT_TAG, Annotated::ZFMT_TAG);
 }
@@ -77,9 +83,11 @@ fn tag_is_stable() {
 #[test]
 fn full_hash_lower32_matches_tag() {
     assert_eq!(Counter::ZFMT_TAG, Counter::ZFMT_FULL_HASH as u32);
+    #[cfg(not(feature = "no-64bit"))]
     assert_eq!(Sensor::ZFMT_TAG, Sensor::ZFMT_FULL_HASH as u32);
 }
 
+#[cfg(not(feature = "no-64bit"))]
 #[test]
 fn sensor_serialize_roundtrip() {
     let s = Sensor {

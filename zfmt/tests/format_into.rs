@@ -21,6 +21,7 @@ pub struct Annotated {
     pub value: u32,
 }
 
+#[cfg(not(feature = "no-64bit"))]
 #[derive(Zfmt)]
 #[repr(C)]
 #[zfmt(format = "ts={timestamp} flags={flags:08x}")]
@@ -47,6 +48,7 @@ fn basic_format_into() {
     assert_eq!(w.0, "count=42 value=7");
 }
 
+#[cfg(not(feature = "no-64bit"))]
 #[test]
 fn hex_specifier() {
     let s = Sensor { timestamp: 1000, flags: 0xDEAD, _pad: [0; 4] };

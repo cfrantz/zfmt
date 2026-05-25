@@ -9,12 +9,12 @@ use zfmt::{Logger, ZfmtU64, log_fatal};
 // Test logger
 
 struct VecLogger {
-    ts: u64,
+    ts: ZfmtU64,
     packets: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl Logger for VecLogger {
-    fn timestamp(&self) -> ZfmtU64 { ZfmtU64::from_u64(self.ts) }
+    fn timestamp(&self) -> ZfmtU64 { self.ts }
     fn send_vectored(&mut self, bufs: &[&[u8]]) {
         let mut data = vec![];
         for b in bufs { data.extend_from_slice(b); }
@@ -22,7 +22,7 @@ impl Logger for VecLogger {
     }
 }
 
-fn make_logger(ts: u64) -> (VecLogger, Arc<Mutex<Vec<Vec<u8>>>>) {
+fn make_logger(ts: ZfmtU64) -> (VecLogger, Arc<Mutex<Vec<Vec<u8>>>>) {
     let packets = Arc::new(Mutex::new(vec![]));
     (VecLogger { ts, packets: packets.clone() }, packets)
 }
@@ -74,7 +74,7 @@ fn zfmt_str_different_strings_different_hash() {
 #[allow(deprecated)]
 #[test]
 fn unstructured_sends_debug_message() {
-    let (mut logger, packets) = make_logger(42);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(42, 0));
     log_fatal!(logger, "hello world");
     let pkts = packets.lock().unwrap();
     assert_eq!(pkts.len(), 1, "expected exactly one packet");
@@ -90,7 +90,7 @@ fn unstructured_sends_debug_message() {
 #[allow(deprecated)]
 #[test]
 fn unstructured_with_placeholder() {
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     let x: u32 = 42;
     log_fatal!(logger, "x={x}");
     let pkts = packets.lock().unwrap();
@@ -103,7 +103,7 @@ fn unstructured_with_placeholder() {
 #[allow(deprecated)]
 #[test]
 fn unstructured_with_named_binding() {
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_fatal!(logger, "val={v} ok", v = 7u32);
     let pkts = packets.lock().unwrap();
     let pkt = &pkts[0];
@@ -115,7 +115,7 @@ fn unstructured_with_named_binding() {
 #[allow(deprecated)]
 #[test]
 fn unstructured_with_hex_spec() {
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     let addr: u32 = 0xDEAD_BEEF;
     log_fatal!(logger, "addr={addr:#010x}");
     let pkts = packets.lock().unwrap();
@@ -128,7 +128,7 @@ fn unstructured_with_hex_spec() {
 #[allow(deprecated)]
 #[test]
 fn unstructured_timestamp_forwarded() {
-    let (mut logger, packets) = make_logger(77777);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(77777, 0));
     log_fatal!(logger, "ts test");
     let pkts = packets.lock().unwrap();
     let (_, hdr_payload, _) = parse_frame(&pkts[0]);
@@ -144,7 +144,7 @@ fn unstructured_timestamp_forwarded() {
 #[test]
 fn log_info_literal_sends_debug_message() {
     use zfmt::log_info;
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_info!(logger, "info text");
     let pkts = packets.lock().unwrap();
     let (_, hdr_payload, hdr_end) = parse_frame(&pkts[0]);
@@ -158,7 +158,7 @@ fn log_info_literal_sends_debug_message() {
 #[test]
 fn log_warn_literal_sends_debug_message() {
     use zfmt::log_warn;
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_warn!(logger, "warn text");
     let pkts = packets.lock().unwrap();
     let (_, hdr_payload, hdr_end) = parse_frame(&pkts[0]);
@@ -171,7 +171,7 @@ fn log_warn_literal_sends_debug_message() {
 #[test]
 fn log_error_literal_sends_debug_message() {
     use zfmt::log_error;
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_error!(logger, "error text");
     let pkts = packets.lock().unwrap();
     let (_, hdr_payload, hdr_end) = parse_frame(&pkts[0]);
@@ -187,7 +187,7 @@ fn log_error_literal_sends_debug_message() {
 #[test]
 fn log_debug_literal_sends_debug_message() {
     use zfmt::log_debug;
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_debug!(logger, "debug msg");
     let pkts = packets.lock().unwrap();
     assert_eq!(pkts.len(), 1);
@@ -203,7 +203,7 @@ fn log_debug_literal_sends_debug_message() {
 #[test]
 fn log_debug_literal_with_placeholder() {
     use zfmt::log_debug;
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     let x: u32 = 42;
     log_debug!(logger, "x={x}");
     let pkts = packets.lock().unwrap();
@@ -217,7 +217,7 @@ fn log_debug_literal_with_placeholder() {
 #[test]
 fn log_debug_literal_with_named_binding() {
     use zfmt::log_debug;
-    let (mut logger, packets) = make_logger(0);
+    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_debug!(logger, "val={v} ok", v = 7u32);
     let pkts = packets.lock().unwrap();
     let pkt = &pkts[0];

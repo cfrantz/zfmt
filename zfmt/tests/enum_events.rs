@@ -30,6 +30,7 @@ pub enum Sensor {
     Reset,
 }
 
+#[cfg(not(feature = "no-64bit"))]
 #[derive(Zfmt)]
 pub enum Level {
     #[zfmt(format = "low={v}")]

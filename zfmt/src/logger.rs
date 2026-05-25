@@ -76,11 +76,11 @@ mod tests {
     struct MockFlat {
         received: [u8; 256],
         len: usize,
-        ts: u64,
+        ts: ZfmtU64,
     }
 
     impl MockFlat {
-        fn new(ts: u64) -> Self {
+        fn new(ts: ZfmtU64) -> Self {
             Self { received: [0u8; 256], len: 0, ts }
         }
 
@@ -91,7 +91,7 @@ mod tests {
 
     impl FlatSend for MockFlat {
         fn timestamp(&self) -> ZfmtU64 {
-            ZfmtU64::from_u64(self.ts)
+            self.ts
         }
 
         fn send(&mut self, data: &[u8]) {
@@ -102,27 +102,27 @@ mod tests {
 
     #[test]
     fn flat_adapter_single_slice() {
-        let mut adapter = FlatAdapter::<_, 128>::new(MockFlat::new(42));
+        let mut adapter = FlatAdapter::<_, 128>::new(MockFlat::new(ZfmtU64::new(42, 0)));
         adapter.send(b"hello");
         assert_eq!(adapter.inner().received(), b"hello");
     }
 
     #[test]
     fn flat_adapter_vectored_assembles() {
-        let mut adapter = FlatAdapter::<_, 128>::new(MockFlat::new(0));
+        let mut adapter = FlatAdapter::<_, 128>::new(MockFlat::new(ZfmtU64::new(0, 0)));
         adapter.send_vectored(&[b"foo", b"bar", b"baz"]);
         assert_eq!(adapter.inner().received(), b"foobarbaz");
     }
 
     #[test]
     fn flat_adapter_timestamp_forwarded() {
-        let adapter = FlatAdapter::<_, 64>::new(MockFlat::new(999));
-        assert_eq!(adapter.timestamp(), ZfmtU64::from_u64(999));
+        let adapter = FlatAdapter::<_, 64>::new(MockFlat::new(ZfmtU64::new(999, 0)));
+        assert_eq!(adapter.timestamp(), ZfmtU64::new(999, 0));
     }
 
     #[test]
     fn flat_adapter_overflow_truncates() {
-        let mut adapter = FlatAdapter::<_, 8>::new(MockFlat::new(0));
+        let mut adapter = FlatAdapter::<_, 8>::new(MockFlat::new(ZfmtU64::new(0, 0)));
         // 6 + 6 = 12 bytes, buffer is 8 — should truncate to 8
         adapter.send_vectored(&[b"abcdef", b"ghijkl"]);
         assert_eq!(adapter.inner().received(), b"abcdefgh");
@@ -130,7 +130,7 @@ mod tests {
 
     #[test]
     fn logger_send_default_impl() {
-        let mut adapter = FlatAdapter::<_, 64>::new(MockFlat::new(0));
+        let mut adapter = FlatAdapter::<_, 64>::new(MockFlat::new(ZfmtU64::new(0, 0)));
         adapter.send(b"direct");
         assert_eq!(adapter.inner().received(), b"direct");
     }
