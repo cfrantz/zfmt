@@ -132,6 +132,8 @@ fn cli_decode_rendered_output() {
     );
 
     let decoded = String::from_utf8_lossy(&out.stdout);
+    // Heartbeat timestamp is 1000 ticks at 1 MHz = 0.001000 s in EventHeader.
+    // The Heartbeat format string uses its own `timestamp` field (raw ticks).
     assert!(
         decoded.contains("heartbeat ts=1000 up=5000ms"),
         "Heartbeat not rendered:\n{decoded}"
@@ -272,4 +274,63 @@ fn cli_db_list_output() {
     assert!(text.contains("[event "), "no event stanzas: {text}");
     assert!(text.contains("[string "), "no string stanzas: {text}");
     assert!(text.contains("heartbeat ts="), "Heartbeat format missing: {text}");
+}
+
+// ---------------------------------------------------------------------------
+// §15.2 — decode: multi-database first-match fallback
+
+#[test]
+fn cli_decode_multi_database_fallback() {
+    let fw = testfw();
+    let dir = TempDir::new().unwrap();
+    let db_full  = dir.path().join("full.db");
+    let db_empty = dir.path().join("empty.db");
+    let stream_path = dir.path().join("stream.bin");
+
+    // Ingest into the full database only.
+    run_ingest(&db_full, &fw);
+
+    // Create an empty database (no events registered).
+    let out = Command::new(zfmt())
+        .args(["db", "create", db_empty.to_str().unwrap()])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+
+    // Generate the test stream.
+    let out = Command::new(&fw)
+        .arg(stream_path.to_str().unwrap())
+        .output()
+        .expect("failed to run `zfmt-testfw`");
+    assert!(out.status.success(), "zfmt-testfw failed");
+
+    // Decode with empty db first, full db second — events must still resolve.
+    let out = Command::new(zfmt())
+        .args([
+            "decode",
+            "--database", db_empty.to_str().unwrap(),
+            "--database", db_full.to_str().unwrap(),
+            stream_path.to_str().unwrap(),
+        ])
+        .output()
+        .expect("failed to run `zfmt decode`");
+    assert!(
+        out.status.success(),
+        "`zfmt decode` failed:\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    let decoded = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        decoded.contains("heartbeat ts=1000 up=5000ms"),
+        "Heartbeat not rendered (fallback db):\n{decoded}"
+    );
+    assert!(
+        decoded.contains("temp celsius_x10=215 sensor=3"),
+        "TempReading not rendered (fallback db):\n{decoded}"
+    );
+    assert!(
+        decoded.contains("alert critical code=42"),
+        "Alert::Critical not rendered (fallback db):\n{decoded}"
+    );
 }
