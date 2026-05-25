@@ -227,6 +227,9 @@ fn emit_field_bytecode(out: &mut Vec<u8>, ty: &Type, canon: &str) -> syn::Result
     // Fixed-array: [T; N]
     if let Type::Array(arr) = ty {
         let elem_canon = canonical_type_str(&arr.elem);
+        if let Some(msg) = crate::bytecode::disabled_type_error(&elem_canon) {
+            return Err(syn::Error::new(arr.elem.span(), msg));
+        }
         if let Some(item_ty) = crate::bytecode::item_type_for(&elem_canon) {
             let n = array_len(&arr.len)?;
             if item_ty == item::UTF8_BYTE || elem_canon == "u8" {
@@ -238,6 +241,10 @@ fn emit_field_bytecode(out: &mut Vec<u8>, ty: &Type, canon: &str) -> syn::Result
             push_uleb128(out, n as u64);
             return Ok(());
         }
+    }
+
+    if let Some(msg) = crate::bytecode::disabled_type_error(canon) {
+        return Err(syn::Error::new(ty.span(), msg));
     }
 
     if let Some(item_ty) = crate::bytecode::item_type_for(canon) {

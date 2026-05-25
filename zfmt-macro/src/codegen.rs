@@ -143,6 +143,9 @@ pub fn gen_bytecode(plans: &[FieldPlan]) -> Result<Vec<u8>, String> {
 fn emit_field_bytecode_for(out: &mut Vec<u8>, ty: &Type, canon: &str) -> Result<(), String> {
     if let Type::Array(arr) = ty {
         let elem_canon = canonical_type_str(&arr.elem);
+        if let Some(msg) = crate::bytecode::disabled_type_error(&elem_canon) {
+            return Err(msg.to_owned());
+        }
         if let Some(item_ty) = crate::bytecode::item_type_for(&elem_canon) {
             let n = array_len_of(&arr.len).ok_or_else(|| {
                 format!("zfmt: array length in `{}` must be a literal integer", canon)
@@ -155,6 +158,9 @@ fn emit_field_bytecode_for(out: &mut Vec<u8>, ty: &Type, canon: &str) -> Result<
             push_uleb128(out, n as u64);
             return Ok(());
         }
+    }
+    if let Some(msg) = crate::bytecode::disabled_type_error(canon) {
+        return Err(msg.to_owned());
     }
     if let Some(item_ty) = crate::bytecode::item_type_for(canon) {
         out.push(opcode(item_ty, operand::SINGLE));

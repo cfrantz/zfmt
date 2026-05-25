@@ -62,22 +62,42 @@ pub fn push_skip(out: &mut Vec<u8>, n: usize) {
     push_uleb128(out, n as u64);
 }
 
+/// Returns a human-readable error message if `canonical` names a type that is
+/// disabled by an active feature flag, or `None` if the type is permitted.
+///
+/// Must be called before `item_type_for` so the macro emits an actionable
+/// compile error rather than silently falling through to the generic
+/// "unsupported type" message.
+pub fn disabled_type_error(canonical: &str) -> Option<&'static str> {
+    #[cfg(feature = "no-float")]
+    if matches!(canonical, "f32" | "f64") {
+        return Some(
+            "floating-point field types (f32, f64) are not supported; \
+             the `no-float` feature is enabled on the `zfmt` crate"
+        );
+    }
+    let _ = canonical;
+    None
+}
+
 /// Map a canonical type name to its item type byte.
 /// Returns `None` for types handled specially (arrays, str, custom).
 pub fn item_type_for(canonical: &str) -> Option<u8> {
     match canonical {
-        "u8" => Some(item::U8),
+        "u8"  => Some(item::U8),
         "u16" => Some(item::U16),
         "u32" => Some(item::U32),
         "u64" => Some(item::U64),
-        "i8" => Some(item::I8),
+        "i8"  => Some(item::I8),
         "i16" => Some(item::I16),
         "i32" => Some(item::I32),
         "i64" => Some(item::I64),
+        #[cfg(not(feature = "no-float"))]
         "f32" => Some(item::F32),
+        #[cfg(not(feature = "no-float"))]
         "f64" => Some(item::F64),
-        "bool" => Some(item::BOOL),
-        "ZfmtStr" => Some(item::STRING_REF),
+        "bool"     => Some(item::BOOL),
+        "ZfmtStr"  => Some(item::STRING_REF),
         _ => None,
     }
 }
