@@ -118,6 +118,7 @@ If a struct or variant has no fields, no `field` lines are emitted.
 | `char` | `char` |
 | `&str`, `String` | `str` |
 | `[T; N]` | `[canonical(T); N]` |
+| `ZfmtU64` | `ZfmtU64` |
 | any other named type `Foo` | `Foo` |
 
 Custom types are referenced by their short (unqualified) name.  If a custom
@@ -196,7 +197,8 @@ opcode = (item_type << 3) | operand_type
 | 14 | `dispatch` | Enum discriminant dispatch (see §4.5) |
 | 15 | `call` | Call a subroutine by tag (see §4.6) |
 | 16 | `string-ref` | Compile-time interned string; u32 hash in stream (see §4.7) |
-| 17–31 | — | Reserved |
+| 17 | `u64-pair` | 64-bit unsigned integer stored as two consecutive little-endian u32 values `[lo, hi]`; only `single` operand is valid (see §4.8) |
+| 18–31 | — | Reserved |
 
 ### 4.3 Operand Types
 
@@ -260,6 +262,21 @@ tag : LEB128   -- 32-bit tag of the target subroutine
 **Execution:** binary-search the event table for `tag`; execute its bytecode
 as a subroutine.  The maximum call depth is **4**.  Recursive calls are
 forbidden.
+
+### 4.8 U64-Pair Instruction (`item_type=17`, `operand_type=0`)
+
+Reads 8 bytes from the event stream; interprets bytes 0–3 as a
+little-endian `u32` (`lo`) and bytes 4–7 as a little-endian `u32` (`hi`);
+reconstructs the 64-bit value as `(hi as u64) << 32 | lo as u64`.
+
+Only the `single` operand type is valid; any other operand value is an error.
+
+**Purpose:** `ZfmtU64` stores a 64-bit value as two `u32` fields, giving it
+4-byte rather than 8-byte alignment.  This eliminates alignment padding in
+`repr(C)` event structs on 32-bit targets where a native `u64` field would
+force an extra 4 bytes of padding.  The wire byte order is identical to a
+native little-endian `u64`, so host decoders reconstruct the value with a
+single read.
 
 ### 4.7 String-Ref Instruction (`item_type=16`, `operand_type=0`)
 
@@ -422,11 +439,11 @@ Emitted immediately before every logged event.
 #[derive(zfmt)]
 #[zfmt(format = "{timestamp} {severity}")]
 pub struct EventHeader {
-    pub timestamp: u64,    // ticks since boot, little-endian
+    pub timestamp: ZfmtU64,  // ticks since boot, as two u32 halves [lo, hi]
     pub severity:  Severity,
-    pub _pad:      [u8; 7],
+    pub _pad:      [u8; 3],
 }
-// sizeof = 16 bytes
+// sizeof = 12 bytes
 ```
 
 The tick rate (ticks per second) is communicated via `StreamStart` (§7.3).
@@ -441,12 +458,12 @@ required for correct decoding.
 #[repr(C)]
 #[derive(zfmt)]
 pub struct StreamStart {
-    pub protocol_version: u16,   // currently 1
-    pub _pad:             [u8; 6],
-    pub tick_rate_hz:     u64,   // ticks per second
-    pub firmware_build_id: u64,  // FNV-1a 64-bit hash of the firmware ELF
+    pub protocol_version:  u16,
+    pub _pad:              [u8; 2],
+    pub tick_rate_hz:      ZfmtU64,  // ticks per second, as two u32 halves [lo, hi]
+    pub firmware_build_id: ZfmtU64,  // FNV-1a 64-bit hash of the firmware ELF
 }
-// sizeof = 24 bytes
+// sizeof = 20 bytes
 ```
 
 `firmware_build_id` allows host tooling to locate the correct ELF and extract
@@ -970,6 +987,16 @@ zfmt/
 `zfmt` and `zfmt-macro` are `no_std` compatible.  `zfmt-host` requires
 `std` and carries heavier dependencies (`object` or `gimli` for ELF
 parsing, `rusqlite` for the database).
+
+### 14.1 Optional Features
+
+| Cargo feature | Effect |
+|---------------|--------|
+| `no-float` | Disables `f32` and `f64` as event field types; the proc-macro emits a compile error if either type appears in a `#[derive(Zfmt)]` struct or variant; `Format` implementations for `f32`/`f64` are compiled out |
+| `no-64bit` | Disables `u64` and `i64` as event field types (same compile-error behaviour); `ZfmtU64::from_u64()`, `ZfmtU64::to_u64()`, and the `From<u64>`/`From<ZfmtU64>` conversions are compiled out (they require 64-bit arithmetic); under this feature `ZfmtU64` formats as 16 lowercase hex digits using only 32-bit shifts and masks; `ZfmtU64` itself remains available and is the correct type for timestamps and other 64-bit values |
+
+`ZfmtU64` is re-exported from the `zfmt` crate alongside `Write`, `Format`,
+`Logger`, `FlatSend`, and `FlatAdapter`.
 
 For each `#[derive(zfmt)]` type the proc-macro generates:
 
