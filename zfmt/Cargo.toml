@@ -8,7 +8,8 @@ rust-version = "1.77"
 zfmt-macro = { path = "../zfmt-macro" }
 
 [features]
-no-float = ["zfmt-macro/no-float"]
+no-float  = ["zfmt-macro/no-float"]
+no-64bit  = ["zfmt-macro/no-64bit"]
 
 # Minimum severity level emitted (default: info).
 # Each level implies all levels above it.

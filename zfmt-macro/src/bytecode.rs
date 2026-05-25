@@ -77,6 +77,13 @@ pub fn disabled_type_error(canonical: &str) -> Option<&'static str> {
              the `no-float` feature is enabled on the `zfmt` crate"
         );
     }
+    #[cfg(feature = "no-64bit")]
+    if matches!(canonical, "u64" | "i64") {
+        return Some(
+            "64-bit integer field types (u64, i64) are not supported; \
+             use ZfmtU64 for timestamps or the `no-64bit` feature is enabled on the `zfmt` crate"
+        );
+    }
     let _ = canonical;
     None
 }
@@ -88,10 +95,12 @@ pub fn item_type_for(canonical: &str) -> Option<u8> {
         "u8"  => Some(item::U8),
         "u16" => Some(item::U16),
         "u32" => Some(item::U32),
+        #[cfg(not(feature = "no-64bit"))]
         "u64" => Some(item::U64),
         "i8"  => Some(item::I8),
         "i16" => Some(item::I16),
         "i32" => Some(item::I32),
+        #[cfg(not(feature = "no-64bit"))]
         "i64" => Some(item::I64),
         #[cfg(not(feature = "no-float"))]
         "f32" => Some(item::F32),

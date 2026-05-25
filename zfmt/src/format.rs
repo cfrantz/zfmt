@@ -307,8 +307,15 @@ macro_rules! impl_fmt_sint {
     )*};
 }
 
+#[cfg(not(feature = "no-64bit"))]
 impl_fmt_uint!(u8, u16, u32, u64);
+#[cfg(feature = "no-64bit")]
+impl_fmt_uint!(u8, u16, u32);
+
+#[cfg(not(feature = "no-64bit"))]
 impl_fmt_sint!((i8, u8), (i16, u16), (i32, u32), (i64, u64));
+#[cfg(feature = "no-64bit")]
+impl_fmt_sint!((i8, u8), (i16, u16), (i32, u32));
 
 #[cfg(not(feature = "no-float"))]
 impl Format for f32 {
@@ -412,30 +419,63 @@ impl ZfmtU64 {
         Self { lo, hi }
     }
 
+    #[cfg(not(feature = "no-64bit"))]
     pub const fn from_u64(v: u64) -> Self {
         Self { lo: v as u32, hi: (v >> 32) as u32 }
     }
 
+    #[cfg(not(feature = "no-64bit"))]
     pub const fn to_u64(self) -> u64 {
         (self.hi as u64) << 32 | (self.lo as u64)
     }
 }
 
+#[cfg(not(feature = "no-64bit"))]
 impl From<u64> for ZfmtU64 {
     fn from(v: u64) -> Self {
         Self::from_u64(v)
     }
 }
 
+#[cfg(not(feature = "no-64bit"))]
 impl From<ZfmtU64> for u64 {
     fn from(v: ZfmtU64) -> u64 {
         v.to_u64()
     }
 }
 
+#[cfg(not(feature = "no-64bit"))]
 impl Format for ZfmtU64 {
     fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
         fmt_uint(w, self.to_u64(), spec, false)
+    }
+}
+
+/// Render a u32 as exactly 8 lowercase hex digits — no u64 arithmetic.
+#[cfg(feature = "no-64bit")]
+fn write_u32_hex8<W: Write>(w: &mut W, v: u32) -> Result<(), Error> {
+    const DIGITS: &[u8; 16] = b"0123456789abcdef";
+    let buf = [
+        DIGITS[((v >> 28) & 0xF) as usize],
+        DIGITS[((v >> 24) & 0xF) as usize],
+        DIGITS[((v >> 20) & 0xF) as usize],
+        DIGITS[((v >> 16) & 0xF) as usize],
+        DIGITS[((v >> 12) & 0xF) as usize],
+        DIGITS[((v >>  8) & 0xF) as usize],
+        DIGITS[((v >>  4) & 0xF) as usize],
+        DIGITS[( v        & 0xF) as usize],
+    ];
+    // SAFETY: all bytes are valid ASCII hex digits.
+    w.write_str(unsafe { core::str::from_utf8_unchecked(&buf) })
+}
+
+/// Under `no-64bit`, ZfmtU64 is displayed as 16 hex digits (hi then lo).
+/// This avoids all 64-bit arithmetic — only 32-bit shifts and masks are used.
+#[cfg(feature = "no-64bit")]
+impl Format for ZfmtU64 {
+    fn fmt<W: Write>(&self, w: &mut W, _spec: FormatSpec) -> Result<(), Error> {
+        write_u32_hex8(w, self.hi)?;
+        write_u32_hex8(w, self.lo)
     }
 }
 
@@ -468,9 +508,10 @@ mod tests {
 
     #[test]
     fn uint_decimal() {
-        assert_eq!(render(0u32,          spec()), "0");
-        assert_eq!(render(42u32,         spec()), "42");
-        assert_eq!(render(u64::MAX,      spec()), "18446744073709551615");
+        assert_eq!(render(0u32,  spec()), "0");
+        assert_eq!(render(42u32, spec()), "42");
+        #[cfg(not(feature = "no-64bit"))]
+        assert_eq!(render(u64::MAX, spec()), "18446744073709551615");
     }
 
     #[test]
@@ -561,11 +602,13 @@ mod tests {
 
     #[test]
     fn sint_decimal() {
-        assert_eq!(render(0i32,       spec()), "0");
-        assert_eq!(render(42i32,      spec()), "42");
-        assert_eq!(render(-42i32,     spec()), "-42");
-        assert_eq!(render(i64::MIN,   spec()), "-9223372036854775808");
-        assert_eq!(render(i64::MAX,   spec()), "9223372036854775807");
+        assert_eq!(render(0i32,   spec()), "0");
+        assert_eq!(render(42i32,  spec()), "42");
+        assert_eq!(render(-42i32, spec()), "-42");
+        #[cfg(not(feature = "no-64bit"))]
+        assert_eq!(render(i64::MIN, spec()), "-9223372036854775808");
+        #[cfg(not(feature = "no-64bit"))]
+        assert_eq!(render(i64::MAX, spec()), "9223372036854775807");
     }
 
     #[test]
@@ -574,6 +617,7 @@ mod tests {
         assert_eq!(render(-1i8,  s), "ff");
         assert_eq!(render(-1i16, s), "ffff");
         assert_eq!(render(-1i32, s), "ffffffff");
+        #[cfg(not(feature = "no-64bit"))]
         assert_eq!(render(-1i64, s), "ffffffffffffffff");
     }
 

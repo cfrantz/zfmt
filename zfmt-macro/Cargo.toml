@@ -9,6 +9,7 @@ proc-macro = true
 
 [features]
 no-float = []
+no-64bit = []
 
 [dependencies]
 syn  = { version = "2", features = ["full"] }
