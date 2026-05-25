@@ -392,6 +392,54 @@ impl Format for ZfmtStr {
 }
 
 // ---------------------------------------------------------------------------
+// ZfmtU64
+
+/// A 64-bit unsigned value stored as two 32-bit halves for 4-byte alignment.
+///
+/// Using `u64` directly in embedded structs forces 8-byte alignment, wasting
+/// 4 bytes of padding in event headers.  `ZfmtU64` is `repr(C)` with two
+/// `u32` fields so the overall alignment is 4.  On the wire the two halves
+/// are transmitted as `[lo, hi]` and the decoder reconstructs the `u64`.
+#[repr(C)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub struct ZfmtU64 {
+    pub lo: u32,
+    pub hi: u32,
+}
+
+impl ZfmtU64 {
+    pub const fn new(lo: u32, hi: u32) -> Self {
+        Self { lo, hi }
+    }
+
+    pub const fn from_u64(v: u64) -> Self {
+        Self { lo: v as u32, hi: (v >> 32) as u32 }
+    }
+
+    pub const fn to_u64(self) -> u64 {
+        (self.hi as u64) << 32 | (self.lo as u64)
+    }
+}
+
+impl From<u64> for ZfmtU64 {
+    fn from(v: u64) -> Self {
+        Self::from_u64(v)
+    }
+}
+
+impl From<ZfmtU64> for u64 {
+    fn from(v: ZfmtU64) -> u64 {
+        v.to_u64()
+    }
+}
+
+impl Format for ZfmtU64 {
+    fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
+        fmt_uint(w, self.to_u64(), spec, false)
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Tests
 
 #[cfg(test)]

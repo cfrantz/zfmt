@@ -23,6 +23,7 @@ pub mod item {
     pub const DISPATCH: u8 = 14;
     pub const CALL: u8 = 15;
     pub const STRING_REF: u8 = 16;
+    pub const U64_PAIR: u8 = 17;
 }
 
 /// Operand type values (§4.3, bits 2..0).
@@ -98,6 +99,7 @@ pub fn item_type_for(canonical: &str) -> Option<u8> {
         "f64" => Some(item::F64),
         "bool"     => Some(item::BOOL),
         "ZfmtStr"  => Some(item::STRING_REF),
+        "ZfmtU64"  => Some(item::U64_PAIR),
         _ => None,
     }
 }
@@ -108,7 +110,7 @@ pub fn size_of_canonical(canonical: &str) -> Option<usize> {
         "u8" | "i8" | "bool" => Some(1),
         "u16" | "i16" => Some(2),
         "u32" | "i32" | "f32" | "ZfmtStr" => Some(4),
-        "u64" | "i64" | "f64" => Some(8),
+        "u64" | "i64" | "f64" | "ZfmtU64" => Some(8),
         _ => None,
     }
 }

@@ -34,6 +34,7 @@ mod item {
     pub const DISPATCH:   u8 = 14;
     pub const CALL:       u8 = 15;
     pub const STRING_REF: u8 = 16;
+    pub const U64_PAIR:   u8 = 17;
 }
 
 mod operand {
@@ -350,6 +351,17 @@ fn run_bc(
                 if depth == 0 { bail!("DISPATCH: max call depth exceeded"); }
                 let sub_values = exec_dispatch(bc, bc_pos, payload, p_pos, db, depth - 1)?;
                 values.extend(sub_values);
+            }
+
+            item::U64_PAIR => {
+                if operand != operand::SINGLE {
+                    bail!("U64_PAIR must use SINGLE operand (got {operand})");
+                }
+                need(payload, *p_pos, 8)?;
+                let lo = u32::from_le_bytes(payload[*p_pos..*p_pos + 4].try_into().unwrap()) as u64;
+                let hi = u32::from_le_bytes(payload[*p_pos + 4..*p_pos + 8].try_into().unwrap()) as u64;
+                *p_pos += 8;
+                values.push(Value::U64((hi << 32) | lo));
             }
 
             other => bail!("unsupported item type {other} in bytecode"),
@@ -773,15 +785,28 @@ mod tests {
 
     #[test]
     fn interpret_event_header_payload() {
-        // EventHeader bytecode: U64/single(0x20) U8/single(0x08) SKIP/fa 7(0x51,0x07) END(0x00)
-        let bc = &[0x20u8, 0x08, 0x51, 0x07, 0x00];
-        let mut payload = vec![0u8; 16];
-        payload[..8].copy_from_slice(&42u64.to_le_bytes());
+        // EventHeader bytecode: U64_PAIR/single(0x88) U8/single(0x08) SKIP/fa 3(0x51,0x03) END(0x00)
+        let bc = &[0x88u8, 0x08, 0x51, 0x03, 0x00];
+        let mut payload = vec![0u8; 12];
+        payload[..4].copy_from_slice(&42u32.to_le_bytes());  // lo
+        payload[4..8].copy_from_slice(&0u32.to_le_bytes());  // hi
         payload[8] = 2; // Info severity
         let vals = interpret(bc, &payload, &db()).unwrap();
         assert_eq!(vals.len(), 2);
         assert!(matches!(vals[0], Value::U64(42)));
         assert!(matches!(vals[1], Value::U8(2)));
+    }
+
+    #[test]
+    fn interpret_u64_pair() {
+        // U64_PAIR/single = (17<<3)|0 = 0x88, END
+        let bc = &[0x88u8, 0x00];
+        let mut payload = vec![0u8; 8];
+        payload[..4].copy_from_slice(&0xDEADBEEFu32.to_le_bytes()); // lo
+        payload[4..8].copy_from_slice(&0x00000001u32.to_le_bytes()); // hi
+        let vals = interpret(bc, &payload, &db()).unwrap();
+        assert_eq!(vals.len(), 1);
+        assert!(matches!(vals[0], Value::U64(0x00000001_DEADBEEFu64)));
     }
 
     #[test]

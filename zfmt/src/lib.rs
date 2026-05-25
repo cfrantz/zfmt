@@ -8,7 +8,7 @@ mod write;
 pub mod events;
 mod macros;
 
-pub use format::{Align, Format, FormatInto, FormatSpec, FormatType, ZfmtStr};
+pub use format::{Align, Format, FormatInto, FormatSpec, FormatType, ZfmtStr, ZfmtU64};
 pub use logger::{FlatAdapter, FlatSend, Logger};
 pub use write::{Error, FixedBuf, Write};
 
