@@ -7,13 +7,22 @@ use anyhow::{Context, Result};
 use crate::db::Db;
 use crate::interpret;
 
+// Well-known event tags (§7) — stable, spec-computed FNV-1a hashes.
+const TAG_STREAM_START:  u32 = 0x9e106a38;
+const TAG_EVENT_HEADER:  u32 = 0x640003d2;
+
 /// Decode a binary stream, writing one line per frame to `out`.
 ///
 /// Each frame is: `tag(u32 LE) | LEB128(payload_len) | payload[payload_len]`.
 /// Unknown tags are warned to stderr and skipped; decode errors are warned
 /// and a placeholder line is written so the rest of the stream continues.
+///
+/// When a `StreamStart` frame is encountered its `tick_rate_hz` field is used
+/// to scale subsequent `EventHeader` timestamps from firmware ticks to seconds.
 pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write) -> Result<()> {
     let mut pos = 0usize;
+    // Updated when a StreamStart frame is parsed; 0 means "rate unknown".
+    let mut tick_rate_hz: u64 = 0;
 
     while pos < data.len() {
         if data.len() - pos < 5 {
@@ -50,11 +59,23 @@ pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write) -> 
             })
         });
 
+        // Extract tick_rate_hz from StreamStart before generic decode.
+        if tag == TAG_STREAM_START && payload.len() >= 16 {
+            tick_rate_hz = u64::from_le_bytes(payload[8..16].try_into().unwrap());
+        }
+
         match result {
             Some((e, db)) => {
                 let tag_hex = format!("{:08x}", tag);
                 match interpret::interpret(&e.bytecode, payload, db) {
-                    Ok(values) => {
+                    Ok(mut values) => {
+                        // Scale EventHeader timestamp from ticks to seconds.
+                        if tag == TAG_EVENT_HEADER && tick_rate_hz > 0 {
+                            if let Some(interpret::Value::U64(ticks)) = values.first() {
+                                let secs = *ticks as f64 / tick_rate_hz as f64;
+                                values[0] = interpret::Value::F64(secs);
+                            }
+                        }
                         let fmt_opt = databases.iter().find_map(|d| {
                             d.lookup_string(e.format_hash).ok().flatten()
                         });
@@ -212,5 +233,85 @@ mod tests {
         decode_stream(&stream, &[db], &mut out).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert_eq!(s.trim(), "[11111111] world");
+    }
+
+    // Helper: build a minimal StreamStart payload (24 bytes, §7.3).
+    fn stream_start_payload(tick_rate_hz: u64) -> Vec<u8> {
+        let mut p = vec![0u8; 24];
+        p[..2].copy_from_slice(&1u16.to_le_bytes());       // protocol_version = 1
+        p[8..16].copy_from_slice(&tick_rate_hz.to_le_bytes());
+        p
+    }
+
+    // Helper: build an EventHeader payload (16 bytes, §7.2).
+    fn event_header_payload(timestamp_ticks: u64, severity: u8) -> Vec<u8> {
+        let mut p = vec![0u8; 16];
+        p[..8].copy_from_slice(&timestamp_ticks.to_le_bytes());
+        p[8] = severity;
+        p
+    }
+
+    fn frame(tag: u32, payload: &[u8]) -> Vec<u8> {
+        let mut v = tag.to_le_bytes().to_vec();
+        let mut n = payload.len() as u64;
+        loop {
+            let b = (n & 0x7f) as u8;
+            n >>= 7;
+            if n == 0 { v.push(b); break; } else { v.push(b | 0x80); }
+        }
+        v.extend_from_slice(payload);
+        v
+    }
+
+    #[test]
+    fn decode_stream_start_sets_tick_rate() {
+        let mut db = Db::memory().unwrap();
+        let ss_payload = stream_start_payload(1_000_000);
+        let ss_frame = frame(TAG_STREAM_START, &ss_payload);
+
+        // StreamStart is not in the DB — it should be skipped gracefully.
+        // The tick_rate_hz is still extracted from the raw payload before the DB lookup.
+        // Here we verify that a subsequent EventHeader uses the scaled timestamp.
+        use crate::elf::{EventEntry, StringEntry};
+        let fmt_hash: u32 = 0xaabb1234;
+        db.ingest(&[
+            EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+                format_hash: fmt_hash,
+                bytecode: vec![0x20, 0x08, 0x51, 0x07, 0x00] },
+        ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let hdr_payload = event_header_payload(2_000_000, 2); // 2s at 1MHz
+        let mut stream = ss_frame;
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr_payload));
+
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // Timestamp should be scaled: 2_000_000 ticks / 1_000_000 Hz = 2.0 s
+        assert!(s.contains("2.000000"), "expected scaled timestamp in: {s:?}");
+        assert!(s.contains("2"), "expected severity in: {s:?}");
+    }
+
+    #[test]
+    fn decode_event_header_no_stream_start_raw_ticks() {
+        // Without a prior StreamStart, timestamps are shown as raw tick counts.
+        let mut db = Db::memory().unwrap();
+        let fmt_hash: u32 = 0xccdd5678;
+        use crate::elf::{EventEntry, StringEntry};
+        db.ingest(&[EventEntry {
+            tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+            format_hash: fmt_hash,
+            bytecode: vec![0x20, 0x08, 0x51, 0x07, 0x00],
+        }], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let hdr_payload = event_header_payload(99_000, 3);
+        let stream = frame(TAG_EVENT_HEADER, &hdr_payload);
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        // No scaling — raw tick count 99000 should appear.
+        assert!(s.contains("99000"), "expected raw ticks in: {s:?}");
     }
 }

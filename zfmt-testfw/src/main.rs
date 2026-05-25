@@ -6,7 +6,7 @@
 //! The binary itself is also used as the ELF for `zfmt ingest` (it contains
 //! `.zfmt_events.*` and `.zfmt_strings.*` sections).
 
-use zfmt::ZfmtStr;
+use zfmt::{ZfmtStr, events::StreamStart};
 
 // ---------------------------------------------------------------------------
 // Event definitions — all use the real #[derive(Zfmt)] macro
@@ -58,9 +58,10 @@ impl zfmt::FlatSend for VecCollect {
 // ---------------------------------------------------------------------------
 // Known test values — published so CLI tests can assert against them
 
-pub const HEARTBEAT_TIMESTAMP: u64 = 1_000;
+pub const TICK_RATE_HZ:       u64   = 1_000_000; // 1 MHz tick rate
+pub const HEARTBEAT_TIMESTAMP: u64 = 1_000;       // 0.001000 s
 pub const HEARTBEAT_UPTIME_MS: u32 = 5_000;
-pub const TEMP_CELSIUS_X10: i16    = 215;  // 21.5 °C
+pub const TEMP_CELSIUS_X10: i16    = 215;          // 21.5 °C
 pub const TEMP_SENSOR_ID:    u8    = 3;
 pub const ALERT_CODE:        u32   = 42;
 pub const NAMED_SEQ:         u32   = 7;
@@ -69,6 +70,14 @@ pub const NAMED_SEQ:         u32   = 7;
 #[allow(deprecated)]
 pub fn generate_test_stream() -> Vec<u8> {
     let mut logger = zfmt::FlatAdapter::<VecCollect, 256>::new(VecCollect(Vec::new()));
+
+    // §7.3: StreamStart is the first event in every stream (bare — no EventHeader).
+    zfmt::log_bare_event!(logger, StreamStart {
+        protocol_version: StreamStart::PROTOCOL_VERSION,
+        _pad0: [0; 6],
+        tick_rate_hz: TICK_RATE_HZ,
+        firmware_build_id: 0xDEAD_CAFE_0000_0001,
+    });
 
     zfmt::log_info!(logger, Heartbeat {
         timestamp:  HEARTBEAT_TIMESTAMP,
