@@ -16,6 +16,7 @@ from the ELF's linker sections.
 3. [Use Cases](#use-cases)
 4. [Host Tooling](#host-tooling)
 5. [Quick Start](#quick-start)
+6. [Cargo Features](#cargo-features)
 
 ---
 
@@ -269,13 +270,13 @@ pub enum Alert {
 array and flushes them via a user-supplied `FlatSend` implementation:
 
 ```rust
-use zfmt::{FlatAdapter, FlatSend};
+use zfmt::{FlatAdapter, FlatSend, ZfmtU64};
 
 struct UartLogger;
 
 impl FlatSend for UartLogger {
-    fn timestamp(&self) -> u64 {
-        read_tick_counter()   // your hardware timer
+    fn timestamp(&self) -> ZfmtU64 {
+        ZfmtU64::new(read_tick_counter(), 0)  // your hardware timer
     }
     fn send(&mut self, data: &[u8]) {
         uart_write(data);     // UART / USB / DMA ring buffer / etc.
@@ -293,9 +294,9 @@ use zfmt::events::StreamStart;
 // Emit StreamStart once at boot — required for timestamp scaling on the host.
 zfmt::log_bare_event!(unsafe { &mut LOGGER }, StreamStart {
     protocol_version: StreamStart::PROTOCOL_VERSION,
-    _pad0: [0; 6],
-    tick_rate_hz: 1_000_000,   // your hardware tick rate in Hz
-    firmware_build_id: 0,
+    _pad0: [0; 2],
+    tick_rate_hz: ZfmtU64::new(1_000_000, 0),   // your hardware tick rate in Hz
+    firmware_build_id: ZfmtU64::new(0, 0),
 });
 
 // Log structured events at the appropriate severity.
@@ -346,6 +347,84 @@ $ echo $?
 
 If a new event is added to firmware but `zfmt ingest` has not been re-run,
 `verify` exits non-zero and lists the missing tags.
+
+---
+
+## Cargo Features
+
+### Log level features
+
+The minimum severity level that the firmware will emit is controlled by a set
+of hierarchical features.  Each level implies all levels above it.
+
+| Feature | Enables |
+|---------|---------|
+| `log-level-error` | `log_error!`, `log_fatal!` |
+| `log-level-warn` *(default)* | above + `log_warn!` |
+| `log-level-info` | above + `log_info!` |
+| `log-level-debug` | above + `log_debug!` |
+| `log-level-trace` | above + `log_trace!` |
+
+`log_fatal!` is always enabled regardless of the selected level; it is intended
+for unrecoverable faults where suppression is never appropriate.
+
+To select a specific level, disable the default features and re-enable only
+what you need:
+
+```toml
+[dependencies]
+zfmt = { path = "../zfmt", default-features = false, features = ["log-level-warn"] }
+```
+
+### Constraint features
+
+Two opt-in features restrict which field types may appear in `#[derive(Zfmt)]`
+structs and enums.  They are intended for targets where the corresponding
+compiler runtime helpers are absent or undesirable.
+
+#### `no-float`
+
+Disables support for `f32` and `f64` field types.
+
+```toml
+zfmt = { path = "../zfmt", features = ["no-float"] }
+```
+
+- `Format` impls for `f32` and `f64` are compiled out.
+- The proc-macro rejects any struct or enum field declared as `f32` or `f64`
+  with a clear compile error rather than silently generating wrong bytecode.
+- Useful for Cortex-M0 / M0+ targets that lack an FPU and where linking the
+  soft-float runtime (`__aeabi_fadd` etc.) is unacceptable.
+
+#### `no-64bit`
+
+Disables support for `u64` and `i64` field types.
+
+```toml
+zfmt = { path = "../zfmt", features = ["no-64bit"] }
+```
+
+- `Format` impls for `u64` and `i64` are compiled out.
+- The proc-macro rejects any struct or enum field declared as `u64` or `i64`
+  with a clear compile error.
+- `ZfmtU64::from_u64()`, `ZfmtU64::to_u64()`, and the `From<u64>` /
+  `From<ZfmtU64>` conversions are compiled out (they require 64-bit arithmetic
+  that would pull in runtime helpers such as `__aeabi_uldivmod`).
+- `ZfmtU64` itself is still available and is the correct type for timestamps
+  on these targets.  It stores a 64-bit value as two `u32` halves and, under
+  `no-64bit`, formats as 16 lowercase hex digits using only 32-bit operations.
+- Useful for Cortex-M0 / M0+ targets where 64-bit arithmetic is emulated by
+  compiler runtime helpers that are absent in a bare-metal build.
+
+**Constructing timestamps under `no-64bit`:**
+
+```rust
+// Hardware counter fits in 32 bits — zero-extend into the high word.
+ZfmtU64::new(read_tick_counter(), 0)
+
+// Hardware counter is already split into two 32-bit registers.
+ZfmtU64::new(timer_lo(), timer_hi())
+```
 
 ---
 
