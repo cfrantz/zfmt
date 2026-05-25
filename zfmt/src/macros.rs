@@ -1,5 +1,18 @@
 //! Logging macros (§13).
 
+/// Send a bare event (no `EventHeader`) to a logger (§6.3).
+///
+/// Used for protocol-level events like `StreamStart` that are emitted
+/// without a timestamp/severity wrapper.
+#[macro_export]
+macro_rules! log_bare_event {
+    ($logger:expr, $event:expr) => {{
+        let ref mut _logger = $logger;
+        let _event = $event;
+        $crate::output::send_bare_event(_logger, &_event);
+    }};
+}
+
 /// Send a structured event to a logger.
 ///
 /// Usage: `log_event!(logger, severity, event_expr)`

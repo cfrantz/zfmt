@@ -67,6 +67,29 @@ where
 }
 
 // ---------------------------------------------------------------------------
+// Public entry point: bare event (no EventHeader prefix, §6.3)
+
+/// Send a bare event — just `[tag][LEB128(len)][payload]` — without an
+/// `EventHeader`.  Use this for protocol-level events like `StreamStart`.
+#[inline]
+pub fn send_bare_event<L, E>(logger: &mut L, event: &E)
+where
+    L: Logger + ?Sized,
+    E: ZfmtEvent,
+{
+    let epl = ZfmtEvent::payload_size(event) as u32;
+    let mut frm = [0u8; 9]; // tag(4) + LEB128(up to 5)
+    let mut n = 0usize;
+    frm[n..n + 4].copy_from_slice(&ZfmtEvent::zfmt_tag(event).to_le_bytes());
+    n += 4;
+    n += leb128::encode(epl, &mut frm[n..]);
+    let fl = n;
+    ZfmtEvent::with_payload_bytes(event, |eb| {
+        logger.send_vectored(&[&frm[..fl], eb]);
+    });
+}
+
+// ---------------------------------------------------------------------------
 // Public entry point called by `log_event!`
 
 /// Send an event through `logger` according to the active output mode.
