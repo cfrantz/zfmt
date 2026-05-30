@@ -133,12 +133,37 @@ not orphan historical database entries.
 
 ### 3.5 Collision Handling
 
-- Tooling **must** warn at build time if two events in the same build share
-  the same 32-bit tag.
-- Tooling **must** refuse to add a database entry whose full 64-bit hash
-  matches an existing entry with different content.
-- Tooling **must** refuse to add an entry whose 32-bit tag matches an existing
-  entry with a different 64-bit hash (a wire-stream collision).
+The proc-macro has no visibility into other types being compiled — it processes
+one type at a time with no cross-type or cross-crate state.  Collision
+detection therefore cannot happen at proc-macro expansion time.  The database
+is the canonical registry of all tags ever used across all firmware versions,
+and `zfmt ingest` is the correct and sufficient detection point.
+
+When `zfmt ingest` parses a firmware ELF it reads every entry in the
+`.zfmt_events` section, including multiple entries with the same 32-bit tag
+that may result from a same-build collision (the linker concatenates all
+subsections of the same name).  The following rules apply:
+
+- `zfmt ingest` **must** fail with a descriptive error if two entries in the
+  same ELF share the same 32-bit tag but have different 64-bit full hashes
+  (a same-build collision).
+- `zfmt ingest` **must** fail with a descriptive error if a new entry's 32-bit
+  tag matches an existing database entry with a different 64-bit full hash
+  (a cross-build wire-stream collision).
+- `zfmt ingest` **must** fail with a descriptive error if a new entry's 64-bit
+  full hash matches an existing database entry with different content (a
+  full-hash collision, indicating data corruption or a hash algorithm defect).
+- If a new entry's 64-bit full hash matches an existing database entry with
+  identical content, the entry is silently skipped (idempotent re-ingest).
+
+**Resolving a collision.**  The recommended resolution is to rename the
+conflicting type or add a distinguishing field — both change the canonical
+hash input and therefore the tag.  When renaming is not feasible (e.g. the
+name is part of a public API), a `#[zfmt(salt = "...")]` attribute may be
+added to append a `salt <value>\n` line to the canonical hash input, changing
+both the full hash and the tag while keeping them mutually consistent.  The
+salt mechanism is not yet implemented; this note documents the intended escape
+hatch for a future release.
 
 ### 3.6 Example
 
