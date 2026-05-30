@@ -37,6 +37,14 @@ enum Command {
         databases: Vec<PathBuf>,
         /// Binary stream file to decode
         stream: PathBuf,
+        /// Fallback tick rate in Hz for timestamp scaling, used when the stream
+        /// contains no StreamStart frame (or the StreamStart was not captured).
+        #[arg(long)]
+        tick_rate_hz: Option<u64>,
+        /// Fallback protocol version, used when the stream contains no StreamStart
+        /// frame. 1 = no sequence tracking (default); 2 = sequence gap detection.
+        #[arg(long, default_value = "1")]
+        protocol_version: u16,
     },
 
     /// Verify every event in an ELF is present in the database (§15.3)
@@ -88,8 +96,8 @@ fn main() -> Result<()> {
         Command::Ingest { database, elf: elf_path, build_id } => {
             cmd_ingest(database, elf_path, build_id)
         }
-        Command::Decode { databases, stream } => {
-            cmd_decode(databases, stream)
+        Command::Decode { databases, stream, tick_rate_hz, protocol_version } => {
+            cmd_decode(databases, stream, tick_rate_hz, protocol_version)
         }
         Command::Verify { database, elf: elf_path } => {
             cmd_verify(database, elf_path)
@@ -139,7 +147,7 @@ fn cmd_ingest(db_path: PathBuf, elf_path: PathBuf, build_id_hex: String) -> Resu
     Ok(())
 }
 
-fn cmd_decode(db_paths: Vec<PathBuf>, stream_path: PathBuf) -> Result<()> {
+fn cmd_decode(db_paths: Vec<PathBuf>, stream_path: PathBuf, tick_rate_hz: Option<u64>, protocol_version: u16) -> Result<()> {
     let dbs: Vec<Db> = if db_paths.is_empty() {
         // Default database.
         let p = PathBuf::from("zfmt/events.db");
@@ -155,7 +163,11 @@ fn cmd_decode(db_paths: Vec<PathBuf>, stream_path: PathBuf) -> Result<()> {
     let data = std::fs::read(&stream_path)
         .with_context(|| format!("read {}", stream_path.display()))?;
 
-    decode::decode_stream(&data, &dbs, &mut std::io::stdout())
+    let config = decode::DecodeConfig {
+        tick_rate_hz: tick_rate_hz.unwrap_or(0),
+        protocol_version,
+    };
+    decode::decode_stream(&data, &dbs, &mut std::io::stdout(), &config)
 }
 
 fn cmd_verify(db_path: PathBuf, elf_path: PathBuf) -> Result<()> {

@@ -11,20 +11,39 @@ use crate::interpret;
 const TAG_STREAM_START:  u32 = 0x0ef1ba00;
 const TAG_EVENT_HEADER:  u32 = 0xe43ae42d;
 
+/// Fallback decoder configuration for streams that may not contain a `StreamStart` frame.
+///
+/// When a `StreamStart` frame is encountered in the stream it always takes precedence,
+/// overriding whatever was set here.  These values are used as initial state only
+/// when no `StreamStart` has been seen yet.
+#[derive(Debug, Clone)]
+pub struct DecodeConfig {
+    /// Tick rate in Hz for timestamp scaling.  0 = unknown (timestamps shown as raw ticks).
+    pub tick_rate_hz: u64,
+    /// Protocol version for feature detection.  1 = no seq tracking; 2 = seq tracking.
+    pub protocol_version: u16,
+}
+
+impl Default for DecodeConfig {
+    fn default() -> Self {
+        Self { tick_rate_hz: 0, protocol_version: 1 }
+    }
+}
+
 /// Decode a binary stream, writing one line per frame to `out`.
 ///
 /// Each frame is: `tag(u32 LE) | LEB128(payload_len) | payload[payload_len]`.
 /// Unknown tags are warned to stderr and skipped; decode errors are warned
 /// and a placeholder line is written so the rest of the stream continues.
 ///
-/// When a `StreamStart` frame is encountered its `tick_rate_hz` field is used
-/// to scale subsequent `EventHeader` timestamps from firmware ticks to seconds.
-pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write) -> Result<()> {
+/// `config` provides initial state used when the stream does not begin with a
+/// `StreamStart` frame.  When a `StreamStart` is encountered it overrides these
+/// values for all subsequent frames.
+pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write, config: &DecodeConfig) -> Result<()> {
     let mut pos = 0usize;
-    // Updated when a StreamStart frame is parsed; 0 means "rate unknown".
-    let mut tick_rate_hz: u64 = 0;
-    // Sequence tracking: active only when StreamStart.protocol_version >= 2.
-    let mut seq_enabled = false;
+    let mut tick_rate_hz: u64 = config.tick_rate_hz;
+    // Sequence tracking: active when protocol_version >= 2.
+    let mut seq_enabled = config.protocol_version >= 2;
     let mut prev_seq: Option<u32> = None;
 
     while pos < data.len() {
@@ -187,7 +206,7 @@ mod tests {
     #[test]
     fn decode_empty_stream() {
         let db = Db::memory().unwrap();
-        assert!(decode_stream(&[], &[db], &mut sink()).is_ok());
+        assert!(decode_stream(&[], &[db], &mut sink(), &DecodeConfig::default()).is_ok());
     }
 
     #[test]
@@ -206,7 +225,7 @@ mod tests {
 
         let mut stream = tag.to_le_bytes().to_vec();
         stream.push(0x00); // LEB128 payload_len = 0
-        assert!(decode_stream(&stream, &[db], &mut sink()).is_ok());
+        assert!(decode_stream(&stream, &[db], &mut sink(), &DecodeConfig::default()).is_ok());
     }
 
     #[test]
@@ -226,7 +245,7 @@ mod tests {
         stream.push(0x04); // LEB128(4)
         stream.extend_from_slice(&42u32.to_le_bytes());
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("val=42"), "got: {s:?}");
     }
@@ -254,7 +273,7 @@ mod tests {
         stream.extend_from_slice(&payload);
 
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert_eq!(s.trim(), "[11111111] world");
     }
@@ -317,7 +336,7 @@ mod tests {
         stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr_payload));
 
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
         let s = String::from_utf8(out).unwrap();
         // Timestamp should be scaled: 2_000_000 ticks / 1_000_000 Hz = 2.0 s
         assert!(s.contains("2.000000"), "expected scaled timestamp in: {s:?}");
@@ -346,7 +365,7 @@ mod tests {
         stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
 
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(s.contains("[seq gap: ~3 events dropped]"),
             "expected gap annotation; got:\n{s}");
@@ -374,7 +393,7 @@ mod tests {
         stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
 
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(!s.contains("seq gap"), "unexpected gap annotation; got:\n{s}");
     }
@@ -401,7 +420,7 @@ mod tests {
         stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
 
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(!s.contains("seq gap"), "v1 stream should not produce gap annotations; got:\n{s}");
     }
@@ -429,7 +448,7 @@ mod tests {
         stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
 
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
         let s = String::from_utf8(out).unwrap();
         assert!(!s.contains("seq gap"), "wrap should not be reported as gap; got:\n{s}");
     }
@@ -450,9 +469,58 @@ mod tests {
         let hdr_payload = event_header_payload(99_000, 3, 0);
         let stream = frame(TAG_EVENT_HEADER, &hdr_payload);
         let mut out = Vec::new();
-        decode_stream(&stream, &[db], &mut out).unwrap();
+        decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
+
         let s = String::from_utf8(out).unwrap();
         // No scaling — raw tick count 99000 should appear.
         assert!(s.contains("99000"), "expected raw ticks in: {s:?}");
+    }
+
+    #[test]
+    fn decode_config_fallback_tick_rate() {
+        // Stream has no StreamStart; DecodeConfig supplies tick_rate_hz as fallback.
+        let mut db = Db::memory().unwrap();
+        let fmt_hash: u32 = 0xfb010001;
+        use crate::elf::{EventEntry, StringEntry};
+        db.ingest(&[
+            EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+                format_hash: fmt_hash,
+                bytecode: vec![0x88, 0x08, 0x49, 0x03, 0x00] },
+        ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let hdr_payload = event_header_payload(1_000_000, 2, 0); // 1s at 1MHz
+        let stream = frame(TAG_EVENT_HEADER, &hdr_payload);
+        let mut out = Vec::new();
+        let config = DecodeConfig { tick_rate_hz: 1_000_000, protocol_version: 1 };
+        decode_stream(&stream, &[db], &mut out, &config).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("1.000000"), "expected scaled timestamp from fallback config; got:\n{s}");
+    }
+
+    #[test]
+    fn decode_config_fallback_seq_tracking() {
+        // Stream has no StreamStart; DecodeConfig enables seq tracking as fallback.
+        let mut db = Db::memory().unwrap();
+        let fmt_hash: u32 = 0xfb020001;
+        use crate::elf::{EventEntry, StringEntry};
+        db.ingest(&[
+            EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+                format_hash: fmt_hash,
+                bytecode: vec![0x88, 0x08, 0x49, 0x03, 0x00] },
+        ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let hdr0 = event_header_payload(0, 2, 0);
+        let hdr1 = event_header_payload(1, 2, 5); // gap of 4
+
+        let mut stream = frame(TAG_EVENT_HEADER, &hdr0);
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
+        let mut out = Vec::new();
+        let config = DecodeConfig { tick_rate_hz: 0, protocol_version: 2 };
+        decode_stream(&stream, &[db], &mut out, &config).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("[seq gap: ~4 events dropped]"),
+            "expected gap annotation from fallback config; got:\n{s}");
     }
 }

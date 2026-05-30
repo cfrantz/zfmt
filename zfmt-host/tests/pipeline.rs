@@ -4,7 +4,7 @@
 use tempfile::TempDir;
 use zfmt_host::{
     db::Db,
-    decode::decode_stream,
+    decode::{decode_stream, DecodeConfig},
     elf::{EventEntry, StringEntry},
 };
 
@@ -60,7 +60,7 @@ fn make_db(
 /// Run decode_stream, return stdout as a String.
 fn decode_to_string(stream: &[u8], db: Db) -> String {
     let mut out = Vec::new();
-    decode_stream(stream, &[db], &mut out).unwrap();
+    decode_stream(stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
     String::from_utf8(out).unwrap()
 }
 
@@ -133,7 +133,7 @@ fn pipeline_unknown_tag_no_output() {
 
     let stream = frame(0xdeadbeef, &[1u8, 2, 3, 4]);
     let mut out = Vec::new();
-    decode_stream(&stream, &[db], &mut out).unwrap();
+    decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).unwrap();
     assert!(out.is_empty(), "unknown tag should produce no stdout: {:?}", out);
 }
 
@@ -151,7 +151,7 @@ fn pipeline_truncated_stream_graceful() {
     stream.truncate(stream.len() - 8); // lop off the tail
 
     let mut out = Vec::new();
-    assert!(decode_stream(&stream, &[db], &mut out).is_ok());
+    assert!(decode_stream(&stream, &[db], &mut out, &DecodeConfig::default()).is_ok());
 }
 
 // ---------------------------------------------------------------------------

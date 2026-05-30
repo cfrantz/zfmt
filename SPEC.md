@@ -501,6 +501,25 @@ Implementations that use `Logger::next_seq` (§12.1) must emit `StreamStart`
 with `protocol_version = 2`.  The constant `StreamStart::PROTOCOL_VERSION`
 reflects the version produced by the current implementation.
 
+**Re-emitting StreamStart** is optional and requires no library support —
+the same `log_bare_event!` call used at boot is sufficient.  Consider
+re-emitting periodically if your deployment includes any of:
+
+- A host that may connect after firmware has been running (e.g. a UART where
+  the client is not guaranteed to be present at power-on).
+- A host that may reconnect after a disconnect (e.g. USB-CDC on device that
+  stays powered while the host restarts).
+- A host that reads from a ring buffer that may have wrapped, discarding the
+  initial `StreamStart`.
+
+When and how often to re-emit is an application decision; the host decoder
+treats repeated `StreamStart` frames as an updated anchor for tick-rate
+scaling and sequence tracking and does not treat them as errors.  Many
+deployments — particularly those with a permanently connected debug link or
+where the host is always present at boot — have no reason to re-emit at all.
+The alternative to re-emission is to supply `--tick-rate-hz` and optionally
+`--protocol-version` directly to `zfmt decode` (§15.2).
+
 ### 7.4 DroppedEvents
 
 Emitted when the firmware's log buffer recovers after an overflow.
@@ -1082,8 +1101,19 @@ Reads a binary event stream and prints human-readable output.  Multiple
 and the first match for a given tag is used.
 
 ```sh
-zfmt decode [--database <path>]... <stream>
+zfmt decode [--database <path>]... [--tick-rate-hz <hz>] [--protocol-version <n>] <stream>
 ```
+
+`--tick-rate-hz` and `--protocol-version` supply initial decoder state for
+streams that do not begin with a `StreamStart` frame — for example, when a
+UART client attached after boot and the initial `StreamStart` was not
+captured.  A `StreamStart` frame encountered in the stream always overrides
+these values.
+
+| Flag | Default | Effect |
+|------|---------|--------|
+| `--tick-rate-hz <hz>` | 0 (raw ticks) | Fallback tick rate for timestamp scaling |
+| `--protocol-version <n>` | 1 | 1 = ignore seq bytes; 2 = report sequence gaps |
 
 ### 15.3 `zfmt verify`
 

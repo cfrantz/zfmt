@@ -337,9 +337,23 @@ $ zfmt decode --database events.db stream.bin
 [cafebabe] alert critical code=42
 ```
 
-`EventHeader` frames (tag `640003d2`) carry the timestamp (scaled to seconds
+`EventHeader` frames (tag `e43ae42d`) carry the timestamp (scaled to seconds
 using `tick_rate_hz` from `StreamStart`) and severity.  Application event
 frames follow immediately after each header.
+
+If your host may connect after firmware has already been running — for
+example, a UART client that attaches after boot — the `StreamStart` frame
+may not be present at the beginning of the captured stream.  In that case,
+supply the tick rate (and optionally the protocol version) directly:
+
+```
+$ zfmt decode --database events.db --tick-rate-hz 1000000 --protocol-version 2 stream.bin
+```
+
+`zfmt decode` uses these as initial state and silently upgrades to any
+`StreamStart` it encounters in the stream.  Re-emitting `StreamStart`
+periodically from firmware is an alternative; see the `StreamStart`
+documentation in `SPEC.md` §7.3 for guidance on when that is appropriate.
 
 ### 7. Add verify to CI
 
