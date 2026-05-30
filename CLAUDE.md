@@ -63,20 +63,48 @@ Event identity is a 64-bit FNV-1a hash of a canonical text description of the st
 
 Opcodes are a single byte: `(item_type << 3) | operand_type`. Key item types: `u8`–`u64`, `i8`–`i64`, `f32`, `f64`, `bool`, `utf8-byte`, `skip`, `dispatch` (inline enum), `call` (nested struct), `string-ref`, `u64-pair` (ZfmtU64). Operand types: `single`, `fixed-array` (LEB128 count in bytecode), `zero-term`, `var-length` (LEB128 count in stream). See §4 of `SPEC.md`.
 
+### Logger trait design
+
+`Logger` and `FlatSend` both use `&self` (not `&mut self`) for all send methods. IPC sends are inherently shared operations; task-local statics guarantee exclusive access by construction. Implementations that need internal mutation (e.g. a software ring-buffer) use interior mutability (`UnsafeCell`, atomics, `RefCell`).
+
+The trait has three methods:
+- `timestamp(&self) -> ZfmtU64` — current tick count
+- `next_seq(&self) -> u32` — 24-bit sequence counter for gap detection; **default returns 0** (disables sequencing). Override only in the central log-handling task; IPC client loggers leave the default.
+- `send_vectored(&self, bufs: &[&[u8]])` — scatter-gather send; `send` defaults to a single-slice call.
+
+`FlatAdapter<L: FlatSend, const N: usize>` assembles scattered slices into an N-byte stack buffer and forwards to `FlatSend::send`. N is the maximum wire size of any event the task may log.
+
 ### Wire stream format
 
 ```
 item = tag(u32 LE) + length(LEB128) + payload
 ```
 
-`log_info!` always emits an `EventHeader` item (timestamp + severity) immediately before the event item. The `EventHeader` tag is a well-known spec-computed constant (§7.2).
+`log_info!` always emits an `EventHeader` item immediately before the event item. `EventHeader` layout (12 bytes, `repr(C)`):
+
+```
+timestamp: ZfmtU64   // bytes 0–7   (two u32 halves, LE)
+severity:  u8        // byte  8
+seq:       [u8; 3]   // bytes 9–11  (24-bit LE counter; zero when sequencing disabled)
+```
+
+Well-known tags (§7 of `SPEC.md`):
+
+| Event | Tag |
+|-------|-----|
+| `EventHeader` | `0xe43ae42d` |
+| `StreamStart` | `0x0ef1ba00` |
+| `DroppedEvents` | `0xe0ee1b4e` |
+| `DebugMessage` | `0xa1a6a340` |
+
+`StreamStart.protocol_version = 2` signals that `seq` is in use. Version 1 leaves `seq` zeroed and the host ignores it.
 
 ### Host-side decoding (`zfmt-host`)
 
 - **`elf.rs`** — parses `.zfmt_events` and `.zfmt_strings` ELF sections via the `object` crate
 - **`db.rs`** — SQLite store (via `rusqlite`) with tables `events`, `strings`, `ingested_builds`; hashes stored as hex text to avoid i64 truncation of u64 values
 - **`interpret.rs`** — bytecode interpreter that reads payload bytes and produces typed field values
-- **`decode.rs`** — walks the binary stream, dispatches by tag, calls the interpreter, formats output
+- **`decode.rs`** — walks the binary stream, dispatches by tag, calls the interpreter, formats output; on `protocol_version >= 2` streams tracks `EventHeader.seq` and emits `[seq gap: ~N events dropped]` annotations before headers where the counter skips
 - **`export.rs`** — renders the database as human-readable companion text (`events.db.txt`)
 
 ### Feature flags
