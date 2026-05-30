@@ -195,6 +195,116 @@ impl Db {
     }
 
     // -----------------------------------------------------------------------
+    // Check (read-only collision validation)
+
+    /// Validate `events` and `strings` against the database without writing.
+    ///
+    /// Checks for:
+    /// - Same-ELF collisions: two entries in `events` with the same 32-bit tag
+    ///   but different full hashes.
+    /// - Cross-database wire collisions: an entry's 32-bit tag matches an
+    ///   existing database entry with a different full hash.
+    /// - Full-hash collisions: an entry's 64-bit full hash matches an existing
+    ///   database entry with a different tag.
+    /// - String hash collisions: a string's hash matches an existing entry with
+    ///   different content.
+    ///
+    /// Returns `Ok(CheckStats)` if no collisions are found.  Reports how many
+    /// entries are new (would be added by `ingest`) vs already present.
+    pub fn check(
+        &self,
+        events:  &[EventEntry],
+        strings: &[StringEntry],
+    ) -> Result<CheckStats> {
+        let mut stats = CheckStats::default();
+
+        // Same-ELF collision check: scan the input slice for duplicate tags.
+        let mut seen: std::collections::HashMap<u32, u64> = std::collections::HashMap::new();
+        for e in events {
+            match seen.get(&e.tag) {
+                Some(&fh) if fh != e.full_hash => bail!(
+                    "same-build collision in ELF: tag {:08x} appears with \
+                     full_hashes {:016x} and {:016x}",
+                    e.tag, fh, e.full_hash
+                ),
+                Some(_) => {} // identical duplicate — treat as one entry
+                None => { seen.insert(e.tag, e.full_hash); }
+            }
+        }
+
+        // String collision check against database.
+        for s in strings {
+            let hash_hex = format!("{:08x}", s.hash);
+            let existing: Option<String> = self.conn
+                .query_row(
+                    "SELECT content FROM strings WHERE hash = ?1",
+                    params![hash_hex],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("query string")?;
+            match existing {
+                Some(c) if c == s.content => stats.strings_existing += 1,
+                Some(c) => bail!(
+                    "string hash collision: {hash_hex} already exists with different content\
+                    \n  existing: {c:?}\
+                    \n  new:      {:?}",
+                    s.content
+                ),
+                None => stats.strings_new += 1,
+            }
+        }
+
+        // Event collision check against database.
+        for e in events {
+            let tag_hex = format!("{:08x}", e.tag);
+            let fh_hex  = format!("{:016x}", e.full_hash);
+
+            // Check by full_hash (idempotent re-ingest path).
+            let by_hash: Option<String> = self.conn
+                .query_row(
+                    "SELECT tag FROM events WHERE full_hash = ?1",
+                    params![fh_hex],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("query by full_hash")?;
+
+            if let Some(existing_tag) = by_hash {
+                if existing_tag == tag_hex {
+                    stats.events_existing += 1;
+                    continue;
+                }
+                bail!(
+                    "full-hash collision: full_hash {fh_hex} exists with tag {existing_tag} \
+                     but ELF entry has tag {tag_hex}"
+                );
+            }
+
+            // Check by tag (wire collision).
+            let by_tag: Option<String> = self.conn
+                .query_row(
+                    "SELECT full_hash FROM events WHERE tag = ?1",
+                    params![tag_hex],
+                    |row| row.get(0),
+                )
+                .optional()
+                .context("query by tag")?;
+
+            if let Some(existing_fh) = by_tag {
+                bail!(
+                    "wire collision: tag {tag_hex} already mapped to full_hash {existing_fh} \
+                     but ELF entry has full_hash {fh_hex}"
+                );
+            }
+
+            stats.events_new += 1;
+        }
+
+        Ok(stats)
+    }
+
+    // -----------------------------------------------------------------------
     // Verify
 
     /// Check that every event in `events` is already present in the database
@@ -317,6 +427,14 @@ impl Db {
 
 // ---------------------------------------------------------------------------
 // Stats
+
+#[derive(Debug, Default)]
+pub struct CheckStats {
+    pub events_new:       usize,
+    pub events_existing:  usize,
+    pub strings_new:      usize,
+    pub strings_existing: usize,
+}
 
 #[derive(Debug, Default)]
 pub struct IngestStats {
@@ -479,6 +597,47 @@ mod tests {
         // Merge again — should skip.
         let stats2 = dst.merge_from(&src).unwrap();
         assert_eq!(stats2.events_skipped, 1);
+    }
+
+    #[test]
+    fn check_clean_elf() {
+        let mut db = Db::memory().unwrap();
+        let e = evt(0x1234, 0xabcd_1234, 0, &[0x00]);
+        db.ingest(&[e.clone()], &[], 1).unwrap();
+
+        // New event — not in db yet.
+        let new = evt(0x5678, 0xabcd_5678, 0, &[0x00]);
+        let stats = db.check(&[e.clone(), new], &[]).unwrap();
+        assert_eq!(stats.events_existing, 1);
+        assert_eq!(stats.events_new, 1);
+    }
+
+    #[test]
+    fn check_same_elf_collision() {
+        let db = Db::memory().unwrap();
+        let e1 = evt(0xaaaa, 0x0000_0001, 0, &[0x00]);
+        let e2 = evt(0xaaaa, 0x0000_0002, 0, &[0x00]); // same tag, different fh
+        assert!(db.check(&[e1, e2], &[]).is_err());
+    }
+
+    #[test]
+    fn check_wire_collision_with_db() {
+        let mut db = Db::memory().unwrap();
+        db.ingest(&[evt(0xbbbb, 0x1111_bbbb, 0, &[0x00])], &[], 1).unwrap();
+        // New event with same tag but different full_hash.
+        let e = evt(0xbbbb, 0x2222_bbbb, 0, &[0x00]);
+        assert!(db.check(&[e], &[]).is_err());
+    }
+
+    #[test]
+    fn check_does_not_modify_db() {
+        let mut db = Db::memory().unwrap();
+        let e = evt(0xcccc, 0xabcd_cccc, 0, &[0x00]);
+        // check with a new event should succeed but not write to db.
+        db.check(&[e.clone()], &[]).unwrap();
+        // verify the event is still absent from the db.
+        let missing = db.verify(&[e]).unwrap();
+        assert_eq!(missing.len(), 1, "check should not have written to the database");
     }
 
     #[test]

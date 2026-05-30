@@ -4,7 +4,7 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 use clap::{Parser, Subcommand};
 
-use zfmt_host::{db::Db, decode, elf};
+use zfmt_host::{db::{Db, CheckStats}, decode, elf};
 
 // ---------------------------------------------------------------------------
 // CLI definition
@@ -30,7 +30,16 @@ enum Command {
         build_id: String,
     },
 
-    /// Read a binary event stream and print human-readable output (§15.2)
+    /// Validate an ELF against the database without modifying it (§15.2)
+    Check {
+        /// Path to the SQLite database
+        #[arg(long, default_value = "zfmt/events.db")]
+        database: PathBuf,
+        /// Firmware ELF to validate
+        elf: PathBuf,
+    },
+
+    /// Read a binary event stream and print human-readable output (§15.3)
     Decode {
         /// Database(s) to search for event definitions (may be repeated)
         #[arg(long = "database")]
@@ -96,6 +105,9 @@ fn main() -> Result<()> {
         Command::Ingest { database, elf: elf_path, build_id } => {
             cmd_ingest(database, elf_path, build_id)
         }
+        Command::Check { database, elf: elf_path } => {
+            cmd_check(database, elf_path)
+        }
         Command::Decode { databases, stream, tick_rate_hz, protocol_version } => {
             cmd_decode(databases, stream, tick_rate_hz, protocol_version)
         }
@@ -144,6 +156,26 @@ fn cmd_ingest(db_path: PathBuf, elf_path: PathBuf, build_id_hex: String) -> Resu
     db.write_export(&export_path)?;
     eprintln!("companion export written to {}", export_path.display());
 
+    Ok(())
+}
+
+fn cmd_check(db_path: PathBuf, elf_path: PathBuf) -> Result<()> {
+    let elf_data = std::fs::read(&elf_path)
+        .with_context(|| format!("read {}", elf_path.display()))?;
+
+    let events  = elf::parse_events(&elf_data)
+        .with_context(|| format!("parse events from {}", elf_path.display()))?;
+    let strings = elf::parse_strings(&elf_data)
+        .with_context(|| format!("parse strings from {}", elf_path.display()))?;
+
+    let db = Db::open(&db_path)?;
+    let CheckStats { events_new, events_existing, strings_new, strings_existing } =
+        db.check(&events, &strings)?;
+
+    eprintln!(
+        "ok: events: {} new, {} already present  |  strings: {} new, {} already present",
+        events_new, events_existing, strings_new, strings_existing
+    );
     Ok(())
 }
 

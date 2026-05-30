@@ -543,7 +543,7 @@ scaling and sequence tracking and does not treat them as errors.  Many
 deployments — particularly those with a permanently connected debug link or
 where the host is always present at boot — have no reason to re-emit at all.
 The alternative to re-emission is to supply `--tick-rate-hz` and optionally
-`--protocol-version` directly to `zfmt decode` (§15.2).
+`--protocol-version` directly to `zfmt decode` (§15.3).
 
 ### 7.4 DroppedEvents
 
@@ -1119,7 +1119,25 @@ successful run.
 zfmt ingest [--database <path>] <elf>
 ```
 
-### 15.2 `zfmt decode`
+### 15.2 `zfmt check`
+
+Validates the events and strings in an ELF against the database without
+modifying it.  Detects same-build tag collisions within the ELF itself and
+cross-database wire collisions or full-hash collisions against accumulated
+history.  Exits non-zero and prints a descriptive error if any collision is
+found; exits zero and reports counts on success.
+
+```sh
+zfmt check [--database <path>] <elf>
+```
+
+Use `zfmt check` in build and test flows where modifying the database is not
+appropriate — for example, in a CI job that validates a pull-request build
+without writing to the version-controlled database, or in a development
+workflow where the engineer wants to confirm safety before running
+`zfmt ingest`.
+
+### 15.3 `zfmt decode`
 
 Reads a binary event stream and prints human-readable output.  Multiple
 `--database` flags are accepted; databases are searched in the order given
@@ -1140,7 +1158,7 @@ these values.
 | `--tick-rate-hz <hz>` | 0 (raw ticks) | Fallback tick rate for timestamp scaling |
 | `--protocol-version <n>` | 1 | 1 = ignore seq bytes; 2 = report sequence gaps |
 
-### 15.3 `zfmt verify`
+### 15.4 `zfmt verify`
 
 Checks that every event type referenced in an ELF is already present in the
 database.  Exits non-zero if any event is missing.  Intended as a release
@@ -1150,7 +1168,7 @@ gate in CI.
 zfmt verify [--database <path>] <elf>
 ```
 
-### 15.4 `zfmt db create`
+### 15.5 `zfmt db create`
 
 Creates a new empty database at the given path.
 
@@ -1158,7 +1176,7 @@ Creates a new empty database at the given path.
 zfmt db create <path>
 ```
 
-### 15.5 `zfmt db merge`
+### 15.6 `zfmt db merge`
 
 Copies all entries from `<src>` into `<dst>`, applying the standard
 collision policy.  Useful for seeding a personal development database from
@@ -1168,7 +1186,7 @@ the project database.
 zfmt db merge <src> <dst>
 ```
 
-### 15.6 `zfmt db list`
+### 15.7 `zfmt db list`
 
 Prints all events in the database in companion-export format.
 
@@ -1184,17 +1202,27 @@ The recommended release pipeline runs the following steps after building
 the firmware ELF:
 
 ```sh
-# 1. Ingest events into the version-controlled database
+# 1. Validate: check for collisions without modifying the database
+zfmt check --database zfmt/events.db firmware.elf
+
+# 2. Ingest events into the version-controlled database
 zfmt ingest --database zfmt/events.db firmware.elf
 
-# 2. Verify all events are present (catches ingest failures)
+# 3. Verify all events are present (catches ingest failures)
 zfmt verify --database zfmt/events.db firmware.elf
 
-# 3. Commit updated database and companion export
+# 4. Commit updated database and companion export
 git add zfmt/events.db zfmt/events.db.txt
 git commit -m "chore: ingest events for release v1.4.2"
 git tag v1.4.2
 ```
+
+`zfmt check` in step 1 is technically redundant with `zfmt ingest` (ingest
+performs the same collision checks before writing), but running it separately
+makes the pipeline failure mode more explicit: a non-zero exit from `check`
+identifies a collision, while a non-zero exit from `ingest` could also
+indicate a filesystem or database error.  It is also useful in CI jobs that
+validate pull-request builds without touching the shared database.
 
 ---
 
