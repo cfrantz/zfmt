@@ -9,10 +9,10 @@ pub trait Logger {
     fn timestamp(&self) -> ZfmtU64;
 
     /// Send a gather-write list of byte slices as a single logical message.
-    fn send_vectored(&mut self, bufs: &[&[u8]]);
+    fn send_vectored(&self, bufs: &[&[u8]]);
 
     /// Convenience wrapper; defaults to a single-slice vectored call.
-    fn send(&mut self, data: &[u8]) {
+    fn send(&self, data: &[u8]) {
         self.send_vectored(&[data]);
     }
 }
@@ -20,7 +20,7 @@ pub trait Logger {
 /// Implemented by tasks whose IPC layer only supports flat (contiguous) sends.
 pub trait FlatSend {
     fn timestamp(&self) -> ZfmtU64;
-    fn send(&mut self, data: &[u8]);
+    fn send(&self, data: &[u8]);
 }
 
 /// Wraps a `FlatSend` implementation and presents a `Logger` interface by
@@ -39,9 +39,6 @@ impl<L: FlatSend, const N: usize> FlatAdapter<L, N> {
         &self.inner
     }
 
-    pub fn inner_mut(&mut self) -> &mut L {
-        &mut self.inner
-    }
 }
 
 impl<L: FlatSend, const N: usize> Logger for FlatAdapter<L, N> {
@@ -49,7 +46,7 @@ impl<L: FlatSend, const N: usize> Logger for FlatAdapter<L, N> {
         self.inner.timestamp()
     }
 
-    fn send_vectored(&mut self, bufs: &[&[u8]]) {
+    fn send_vectored(&self, bufs: &[&[u8]]) {
         let mut buf = [0u8; N];
         let mut pos = 0usize;
         for slice in bufs {
@@ -72,20 +69,20 @@ impl<L: FlatSend, const N: usize> Logger for FlatAdapter<L, N> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::cell::RefCell;
 
     struct MockFlat {
-        received: [u8; 256],
-        len: usize,
+        received: RefCell<Vec<u8>>,
         ts: ZfmtU64,
     }
 
     impl MockFlat {
         fn new(ts: ZfmtU64) -> Self {
-            Self { received: [0u8; 256], len: 0, ts }
+            Self { received: RefCell::new(Vec::new()), ts }
         }
 
-        fn received(&self) -> &[u8] {
-            &self.received[..self.len]
+        fn received(&self) -> Vec<u8> {
+            self.received.borrow().clone()
         }
     }
 
@@ -94,22 +91,21 @@ mod tests {
             self.ts
         }
 
-        fn send(&mut self, data: &[u8]) {
-            self.len = data.len().min(256);
-            self.received[..self.len].copy_from_slice(&data[..self.len]);
+        fn send(&self, data: &[u8]) {
+            *self.received.borrow_mut() = data.to_vec();
         }
     }
 
     #[test]
     fn flat_adapter_single_slice() {
-        let mut adapter = FlatAdapter::<_, 128>::new(MockFlat::new(ZfmtU64::new(42, 0)));
+        let adapter = FlatAdapter::<_, 128>::new(MockFlat::new(ZfmtU64::new(42, 0)));
         adapter.send(b"hello");
         assert_eq!(adapter.inner().received(), b"hello");
     }
 
     #[test]
     fn flat_adapter_vectored_assembles() {
-        let mut adapter = FlatAdapter::<_, 128>::new(MockFlat::new(ZfmtU64::new(0, 0)));
+        let adapter = FlatAdapter::<_, 128>::new(MockFlat::new(ZfmtU64::new(0, 0)));
         adapter.send_vectored(&[b"foo", b"bar", b"baz"]);
         assert_eq!(adapter.inner().received(), b"foobarbaz");
     }
@@ -122,7 +118,7 @@ mod tests {
 
     #[test]
     fn flat_adapter_overflow_truncates() {
-        let mut adapter = FlatAdapter::<_, 8>::new(MockFlat::new(ZfmtU64::new(0, 0)));
+        let adapter = FlatAdapter::<_, 8>::new(MockFlat::new(ZfmtU64::new(0, 0)));
         // 6 + 6 = 12 bytes, buffer is 8 — should truncate to 8
         adapter.send_vectored(&[b"abcdef", b"ghijkl"]);
         assert_eq!(adapter.inner().received(), b"abcdefgh");
@@ -130,7 +126,7 @@ mod tests {
 
     #[test]
     fn logger_send_default_impl() {
-        let mut adapter = FlatAdapter::<_, 64>::new(MockFlat::new(ZfmtU64::new(0, 0)));
+        let adapter = FlatAdapter::<_, 64>::new(MockFlat::new(ZfmtU64::new(0, 0)));
         adapter.send(b"direct");
         assert_eq!(adapter.inner().received(), b"direct");
     }

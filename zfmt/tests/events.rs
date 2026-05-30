@@ -245,7 +245,7 @@ struct VecLogger {
 
 impl Logger for VecLogger {
     fn timestamp(&self) -> ZfmtU64 { self.ts }
-    fn send_vectored(&mut self, bufs: &[&[u8]]) {
+    fn send_vectored(&self, bufs: &[&[u8]]) {
         let mut data = std::vec::Vec::new();
         for b in bufs { data.extend_from_slice(b); }
         self.packets.lock().unwrap().push(data);
@@ -266,7 +266,7 @@ fn parse_frame(data: &[u8]) -> (u32, Vec<u8>) {
 
 #[test]
 fn log_info_sends_two_frames() {
-    let (mut logger, packets) = make_logger(ZfmtU64::new(12345, 0));
+    let (logger, packets) = make_logger(ZfmtU64::new(12345, 0));
     log_info!(logger, DroppedEvents { count: 7, _pad: [0;4] });
     let pkts = packets.lock().unwrap();
     assert_eq!(pkts.len(), 1);
@@ -290,7 +290,7 @@ fn log_info_sends_two_frames() {
 
 #[test]
 fn log_warn_uses_warn_severity() {
-    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
+    let (logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_warn!(logger, DroppedEvents { count: 0, _pad: [0;4] });
     let pkts = packets.lock().unwrap();
     let (_, hdr_payload) = parse_frame(&pkts[0]);
@@ -299,7 +299,7 @@ fn log_warn_uses_warn_severity() {
 
 #[test]
 fn log_error_uses_error_severity() {
-    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
+    let (logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_error!(logger, DroppedEvents { count: 0, _pad: [0;4] });
     let pkts = packets.lock().unwrap();
     let (_, hdr_payload) = parse_frame(&pkts[0]);
@@ -308,7 +308,7 @@ fn log_error_uses_error_severity() {
 
 #[test]
 fn log_fatal_always_emits() {
-    let (mut logger, packets) = make_logger(ZfmtU64::new(99, 0));
+    let (logger, packets) = make_logger(ZfmtU64::new(99, 0));
     log_fatal!(logger, DroppedEvents { count: 1, _pad: [0;4] });
     let pkts = packets.lock().unwrap();
     assert_eq!(pkts.len(), 1);
@@ -318,7 +318,7 @@ fn log_fatal_always_emits() {
 
 #[test]
 fn log_tier2_debug_message() {
-    let (mut logger, packets) = make_logger(ZfmtU64::new(0, 0));
+    let (logger, packets) = make_logger(ZfmtU64::new(0, 0));
     log_info!(logger, DebugMessage { message: "hello world" });
     let pkts = packets.lock().unwrap();
     let pkt = &pkts[0];

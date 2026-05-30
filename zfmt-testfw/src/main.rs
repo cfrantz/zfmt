@@ -48,11 +48,11 @@ pub struct NamedEvent {
 // ---------------------------------------------------------------------------
 // Minimal logger (std-side: assembles bytes into a Vec)
 
-struct VecCollect(Vec<u8>);
+struct VecCollect(std::cell::RefCell<Vec<u8>>);
 
 impl zfmt::FlatSend for VecCollect {
     fn timestamp(&self) -> ZfmtU64 { ZfmtU64::default() }
-    fn send(&mut self, data: &[u8]) { self.0.extend_from_slice(data); }
+    fn send(&self, data: &[u8]) { self.0.borrow_mut().extend_from_slice(data); }
 }
 
 // ---------------------------------------------------------------------------
@@ -69,7 +69,7 @@ pub const NAMED_SEQ:         u32   = 7;
 /// Generate the binary event stream for the canonical test scenario.
 #[allow(deprecated)]
 pub fn generate_test_stream() -> Vec<u8> {
-    let mut logger = zfmt::FlatAdapter::<VecCollect, 256>::new(VecCollect(Vec::new()));
+    let logger = zfmt::FlatAdapter::<VecCollect, 256>::new(VecCollect(std::cell::RefCell::new(Vec::new())));
 
     // §7.3: StreamStart is the first event in every stream (bare — no EventHeader).
     zfmt::log_bare_event!(logger, StreamStart {
@@ -95,7 +95,8 @@ pub fn generate_test_stream() -> Vec<u8> {
 
     zfmt::log_fatal!(logger, "debug note seq={seq}", seq = NAMED_SEQ);
 
-    logger.inner().0.clone()
+    let result = logger.inner().0.borrow().clone();
+    result
 }
 
 // ---------------------------------------------------------------------------

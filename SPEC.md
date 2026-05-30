@@ -809,10 +809,10 @@ pub trait Logger {
     fn timestamp(&self) -> u64;
 
     /// Sends `bufs` as a single logical message (scatter-gather write).
-    fn send_vectored(&mut self, bufs: &[&[u8]]);
+    fn send_vectored(&self, bufs: &[&[u8]]);
 
     /// Convenience wrapper; default calls `send_vectored(&[data])`.
-    fn send(&mut self, data: &[u8]) {
+    fn send(&self, data: &[u8]) {
         self.send_vectored(&[data]);
     }
 }
@@ -823,6 +823,13 @@ pub trait Logger {
 length bytes, payload bytes) as separate slices.  Implementations that support
 scatter-gather IPC handle these slices natively with no intermediate copy.
 
+Both methods take `&self` rather than `&mut self`.  IPC send operations are
+inherently shared — the kernel serialises concurrent callers — and the
+task-local static pattern (§12.3) means exclusive access is already guaranteed
+by construction.  Implementations that must mutate internal state (e.g., a
+software ring-buffer logger maintaining a write pointer) should use interior
+mutability (`UnsafeCell`, atomics, or `RefCell`) within their type.
+
 ### 12.2 FlatSend and FlatAdapter
 
 For output paths that accept only a single contiguous buffer, `FlatAdapter`
@@ -832,7 +839,7 @@ forwarding:
 ```rust
 pub trait FlatSend {
     fn timestamp(&self) -> u64;
-    fn send(&mut self, data: &[u8]);
+    fn send(&self, data: &[u8]);
 }
 
 pub struct FlatAdapter<L: FlatSend, const N: usize> {
@@ -842,7 +849,7 @@ pub struct FlatAdapter<L: FlatSend, const N: usize> {
 impl<L: FlatSend, const N: usize> Logger for FlatAdapter<L, N> {
     fn timestamp(&self) -> u64 { self.inner.timestamp() }
 
-    fn send_vectored(&mut self, bufs: &[&[u8]]) {
+    fn send_vectored(&self, bufs: &[&[u8]]) {
         let mut buf = [0u8; N];
         let mut pos = 0;
         for b in bufs {

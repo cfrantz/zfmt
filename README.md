@@ -278,13 +278,18 @@ impl FlatSend for UartLogger {
     fn timestamp(&self) -> ZfmtU64 {
         ZfmtU64::new(read_tick_counter(), 0)  // your hardware timer
     }
-    fn send(&mut self, data: &[u8]) {
+    fn send(&self, data: &[u8]) {
         uart_write(data);     // UART / USB / DMA ring buffer / etc.
     }
 }
 
-static mut LOGGER: FlatAdapter<UartLogger, 256> = FlatAdapter::new(UartLogger);
+static LOGGER: FlatAdapter<UartLogger, 256> = FlatAdapter::new(UartLogger);
 ```
+
+Both `Logger::send_vectored` and `FlatSend::send` take `&self`.  IPC sends are
+shared operations by nature, and the task-local static pattern guarantees
+exclusive access by construction.  Implementations that need to mutate internal
+state should use interior mutability (`UnsafeCell`, atomics, or `RefCell`).
 
 ### 4. Emit the stream header and log events
 
@@ -292,7 +297,7 @@ static mut LOGGER: FlatAdapter<UartLogger, 256> = FlatAdapter::new(UartLogger);
 use zfmt::events::StreamStart;
 
 // Emit StreamStart once at boot — required for timestamp scaling on the host.
-zfmt::log_bare_event!(unsafe { &mut LOGGER }, StreamStart {
+zfmt::log_bare_event!(&LOGGER, StreamStart {
     protocol_version: StreamStart::PROTOCOL_VERSION,
     _pad0: [0; 2],
     tick_rate_hz: ZfmtU64::new(1_000_000, 0),   // your hardware tick rate in Hz
@@ -300,9 +305,9 @@ zfmt::log_bare_event!(unsafe { &mut LOGGER }, StreamStart {
 });
 
 // Log structured events at the appropriate severity.
-zfmt::log_info!(unsafe { &mut LOGGER }, Heartbeat { timestamp: 1000, uptime_ms: 5000 });
-zfmt::log_warn!(unsafe { &mut LOGGER }, TempReading { celsius_x10: 215, sensor_id: 3 });
-zfmt::log_error!(unsafe { &mut LOGGER }, Alert::Critical { code: 42 });
+zfmt::log_info!(&LOGGER, Heartbeat { timestamp: 1000, uptime_ms: 5000 });
+zfmt::log_warn!(&LOGGER, TempReading { celsius_x10: 215, sensor_id: 3 });
+zfmt::log_error!(&LOGGER, Alert::Critical { code: 42 });
 ```
 
 ### 5. Ingest the ELF on the host

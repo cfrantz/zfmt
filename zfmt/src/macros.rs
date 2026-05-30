@@ -7,7 +7,7 @@
 #[macro_export]
 macro_rules! log_bare_event {
     ($logger:expr, $event:expr) => {{
-        let ref mut _logger = $logger;
+        let ref _logger = $logger;
         let _event = $event;
         $crate::output::send_bare_event(_logger, &_event);
     }};
@@ -24,7 +24,7 @@ macro_rules! log_bare_event {
 #[macro_export]
 macro_rules! log_event {
     ($logger:expr, $severity:expr, $event:expr) => {{
-        let ref mut _logger = $logger;
+        let ref _logger = $logger;
         let _ts = $crate::Logger::timestamp(&*_logger);
         let _hdr = $crate::events::EventHeader::new(_ts, $severity);
         let _event = $event;

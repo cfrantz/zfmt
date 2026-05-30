@@ -23,7 +23,7 @@ use crate::events::DebugMessage;
 // Packs [EventHeader frame | event frame] into a ≤34-byte stack buffer and
 // calls `send_vectored` with two slices: [framing, event-payload].
 
-fn binary_send<L, E>(logger: &mut L, hdr: &EventHeader, event: &E)
+fn binary_send<L, E>(logger: &L, hdr: &EventHeader, event: &E)
 where
     L: Logger + ?Sized,
     E: ZfmtEvent,
@@ -55,7 +55,7 @@ where
 // in a `DebugMessage`, and binary-sends it.  Requires `E: FormatInto`.
 
 #[cfg(any(feature = "output-text", feature = "output-both"))]
-fn text_send<L, E>(logger: &mut L, hdr: &EventHeader, event: &E)
+fn text_send<L, E>(logger: &L, hdr: &EventHeader, event: &E)
 where
     L: Logger + ?Sized,
     E: FormatInto,
@@ -72,7 +72,7 @@ where
 /// Send a bare event — just `[tag][LEB128(len)][payload]` — without an
 /// `EventHeader`.  Use this for protocol-level events like `StreamStart`.
 #[inline]
-pub fn send_bare_event<L, E>(logger: &mut L, event: &E)
+pub fn send_bare_event<L, E>(logger: &L, event: &E)
 where
     L: Logger + ?Sized,
     E: ZfmtEvent,
@@ -102,7 +102,7 @@ where
 /// context (controlled by the `zfmt = { features = [...] }` declaration in
 /// the consumer's `Cargo.toml`), which is the intended design.
 #[inline]
-pub fn send_event<L, E>(logger: &mut L, hdr: &EventHeader, event: &E)
+pub fn send_event<L, E>(logger: &L, hdr: &EventHeader, event: &E)
 where
     L: Logger + ?Sized,
     E: ZfmtEvent + FormatInto,

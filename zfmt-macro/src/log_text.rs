@@ -92,7 +92,7 @@ pub fn generate(input: proc_macro::TokenStream) -> proc_macro::TokenStream {
             #(#write_stmts)*
         }
         let _zfmt_msg = ::zfmt::events::DebugMessage { message: _zfmt_buf.as_str() };
-        let ref mut _logger = #logger;
+        let ref _logger = #logger;
         let _ts = ::zfmt::Logger::timestamp(&*_logger);
         let _hdr = ::zfmt::events::EventHeader::new(_ts, #severity);
         let _hpl = ::zfmt::ZfmtEvent::payload_size(&_hdr) as u32;
