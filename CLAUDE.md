@@ -29,6 +29,7 @@ cargo build -p zfmt-host
 # Run the CLI
 cargo run -p zfmt-host -- ingest --database events.db firmware.elf
 cargo run -p zfmt-host -- decode --database events.db stream.bin
+cargo run -p zfmt-host -- decode --database events.db --tick-rate-hz 1000000 --protocol-version 2 stream.bin
 cargo run -p zfmt-host -- verify --database events.db firmware.elf
 ```
 
@@ -104,7 +105,7 @@ Well-known tags (§7 of `SPEC.md`):
 - **`elf.rs`** — parses `.zfmt_events` and `.zfmt_strings` ELF sections via the `object` crate
 - **`db.rs`** — SQLite store (via `rusqlite`) with tables `events`, `strings`, `ingested_builds`; hashes stored as hex text to avoid i64 truncation of u64 values
 - **`interpret.rs`** — bytecode interpreter that reads payload bytes and produces typed field values
-- **`decode.rs`** — walks the binary stream, dispatches by tag, calls the interpreter, formats output; on `protocol_version >= 2` streams tracks `EventHeader.seq` and emits `[seq gap: ~N events dropped]` annotations before headers where the counter skips
+- **`decode.rs`** — walks the binary stream, dispatches by tag, calls the interpreter, formats output; on `protocol_version >= 2` streams tracks `EventHeader.seq` and emits `[seq gap: ~N events dropped]` annotations before headers where the counter skips. `decode_stream()` takes a `&DecodeConfig` (fallback `tick_rate_hz` and `protocol_version` used when no `StreamStart` is present; a `StreamStart` in the stream always overrides). Use `DecodeConfig::default()` for normal operation.
 - **`export.rs`** — renders the database as human-readable companion text (`events.db.txt`)
 
 ### Feature flags
