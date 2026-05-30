@@ -765,9 +765,32 @@ all of which are optional, in the order shown:
 | Right-align | `>`*N* | all types | Right-justify with space fill to width *N* |
 | Precision | `.*N*` | floats | *N* decimal places |
 | Type | `x` `X` `b` `o` | integers | Radix; default is decimal |
+| Type | `c` | integers | FourCC character display (see below) |
 
 `0`*N* and `<`*N* / `>`*N* are mutually exclusive.  `#` is only meaningful
 with the `x`, `X`, `b`, and `o` types.
+
+#### FourCC character display (`c`)
+
+The `c` type extracts the bytes of an integer in **little-endian order**
+(LSB first) and renders each byte as:
+
+- A literal character if the byte is printable ASCII (0x20–0x7E, inclusive).
+  Space (0x20) is considered printable because many FourCC codes use it as
+  padding (e.g. `AVI `).
+- The four-character escape `\xNN` (lowercase hex) for all other bytes,
+  including control characters (0x00–0x1F), DEL (0x7F), and high bytes
+  (0x80–0xFF).
+
+Little-endian byte order matches the in-memory layout on little-endian
+targets and the natural reading order in a hexdump.  A `u32` constant
+written so that its bytes spell out the code in a hexdump (e.g.
+`const RIFF: u32 = 0x46464952`) displays correctly with `{tag:c}`.
+
+The output width varies: a four-byte value with all printable bytes produces
+4 characters; each escaped byte adds 3 extra characters (`\xNN` = 4 chars
+instead of 1).  Alignment specifiers (`<`*N*, `>`*N*) may be used to
+normalise width when the worst-case escaped form is known.
 
 ### 10.3 Examples
 
@@ -778,6 +801,7 @@ with the `x`, `X`, `b`, and `o` types.
 {label:<12}    -- string, left-aligned in 12-character field
 {temp:.2}      -- float, 2 decimal places
 {count:+}      -- integer, always show sign
+{tag:c}        -- u32 FourCC; 0x46464952 → "RIFF", 0x46494600 → "\x00FIF"
 ```
 
 ---

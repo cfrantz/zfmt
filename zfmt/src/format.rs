@@ -13,6 +13,9 @@ pub enum FormatType {
     UpperHex,
     Binary,
     Octal,
+    /// FourCC character display (§10.2): bytes in little-endian order,
+    /// printable ASCII (0x20–0x7E) as characters, others as `\xNN`.
+    Char,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -122,6 +125,8 @@ fn fmt_uint<W: Write>(
         FormatType::UpperHex => (16u64, true),
         FormatType::Binary   => (2u64,  false),
         FormatType::Octal    => (8u64,  false),
+        // Char is intercepted before fmt_uint is called; fall back to decimal.
+        FormatType::Char     => (10u64, false),
     };
 
     let mut buf = [0u8; 64];
@@ -144,7 +149,7 @@ fn fmt_uint<W: Write>(
             FormatType::UpperHex => "0X",
             FormatType::Binary   => "0b",
             FormatType::Octal    => "0o",
-            FormatType::Display  => "",
+            FormatType::Display | FormatType::Char => "",
         }
     } else {
         ""
@@ -198,6 +203,24 @@ fn fmt_str_value<W: Write>(w: &mut W, s: &str, spec: FormatSpec) -> Result<(), E
         }
         Align::None => w.write_str(s),
     }
+}
+
+/// FourCC character display: each byte is printed as a printable ASCII
+/// character (0x20–0x7E) or as `\xNN` for non-printable/non-ASCII bytes.
+/// Bytes are consumed in the order supplied, which for integers should be
+/// little-endian (LSB-first) so the display matches memory and hexdump order.
+fn fmt_fourcc<W: Write>(w: &mut W, bytes: &[u8]) -> Result<(), Error> {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    for &b in bytes {
+        if b >= 0x20 && b <= 0x7e {
+            w.write_char(b as char)?;
+        } else {
+            let escape = [b'\\', b'x', HEX[(b >> 4) as usize], HEX[(b & 0xf) as usize]];
+            // SAFETY: escape contains only ASCII bytes.
+            w.write_str(unsafe { core::str::from_utf8_unchecked(&escape) })?;
+        }
+    }
+    Ok(())
 }
 
 /// 10^n as u64, saturating at u64::MAX for large n.
@@ -283,6 +306,9 @@ macro_rules! impl_fmt_uint {
     ($($t:ty),*) => {$(
         impl Format for $t {
             fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
+                if spec.ty == FormatType::Char {
+                    return fmt_fourcc(w, &self.to_le_bytes());
+                }
                 fmt_uint(w, *self as u64, spec, false)
             }
         }
@@ -293,6 +319,9 @@ macro_rules! impl_fmt_sint {
     ($(($signed:ty, $unsigned:ty)),*) => {$(
         impl Format for $signed {
             fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
+                if spec.ty == FormatType::Char {
+                    return fmt_fourcc(w, &(*self as $unsigned).to_le_bytes());
+                }
                 match spec.ty {
                     // Decimal: show sign and absolute value.
                     FormatType::Display => {
@@ -741,5 +770,55 @@ mod tests {
     fn str_wider_than_field() {
         let s = FormatSpec { align: Align::Right, width: 3, ..spec() };
         assert_eq!(render("hello", s), "hello"); // no truncation
+    }
+
+    // --- FourCC / Char ---
+
+    #[test]
+    fn fourcc_all_printable() {
+        // "RIFF" stored LE: 0x46464952 → bytes [0x52, 0x49, 0x46, 0x46]
+        let s = FormatSpec { ty: FormatType::Char, ..spec() };
+        assert_eq!(render(0x46464952u32, s), "RIFF");
+    }
+
+    #[test]
+    fn fourcc_all_printable_u8() {
+        let s = FormatSpec { ty: FormatType::Char, ..spec() };
+        assert_eq!(render(b'R', s), "R");
+    }
+
+    #[test]
+    fn fourcc_non_printable_escape() {
+        // Low byte 0x00 → \x00, remaining bytes 'R', 'I', 'F' printable.
+        // LE bytes of 0x46494600: [0x00, 0x46, 0x49, 0x46]
+        let s = FormatSpec { ty: FormatType::Char, ..spec() };
+        assert_eq!(render(0x46494600u32, s), r"\x00FIF");
+    }
+
+    #[test]
+    fn fourcc_high_byte_escape() {
+        // High byte 0xFF → \xff.  LE bytes of 0xFF464952: [0x52, 0x49, 0x46, 0xFF]
+        let s = FormatSpec { ty: FormatType::Char, ..spec() };
+        assert_eq!(render(0xFF464952u32, s), r"RIF\xff");
+    }
+
+    #[test]
+    fn fourcc_all_non_printable() {
+        let s = FormatSpec { ty: FormatType::Char, ..spec() };
+        assert_eq!(render(0x00000000u32, s), r"\x00\x00\x00\x00");
+    }
+
+    #[test]
+    fn fourcc_space_is_printable() {
+        // Space (0x20) is printable.  "AVI " LE: 0x20495641 → [0x41, 0x56, 0x49, 0x20]
+        let s = FormatSpec { ty: FormatType::Char, ..spec() };
+        assert_eq!(render(0x20495641u32, s), "AVI ");
+    }
+
+    #[test]
+    fn fourcc_del_is_escaped() {
+        // DEL (0x7F) is not printable.  LE bytes of 0x7F000000: [0x00, 0x00, 0x00, 0x7F]
+        let s = FormatSpec { ty: FormatType::Char, ..spec() };
+        assert_eq!(render(0x7F000000u32, s), r"\x00\x00\x00\x7f");
     }
 }

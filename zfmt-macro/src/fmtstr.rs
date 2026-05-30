@@ -45,6 +45,9 @@ pub enum FmtType {
     UpperHex,
     Binary,
     Octal,
+    /// FourCC character display (§10.2): bytes in little-endian order,
+    /// printable ASCII (0x20–0x7E) as characters, others as `\xNN`.
+    Char,
 }
 
 // ---------------------------------------------------------------------------
@@ -189,6 +192,7 @@ fn parse_spec(s: &str) -> Result<ParsedSpec, String> {
         Some('X') => spec.fmt_type = FmtType::UpperHex,
         Some('b') => spec.fmt_type = FmtType::Binary,
         Some('o') => spec.fmt_type = FmtType::Octal,
+        Some('c') => spec.fmt_type = FmtType::Char,
         Some(c) => return Err(format!("unknown format type `{}`", c)),
     }
 
@@ -272,6 +276,16 @@ mod tests {
     #[test]
     fn unclosed_brace_is_error() {
         assert!(parse_format_str("{x").is_err());
+    }
+
+    #[test]
+    fn spec_char_fourcc() {
+        let segs = parse_format_str("{tag:c}").unwrap();
+        if let Segment::Placeholder(p) = &segs[0] {
+            assert_eq!(p.spec.fmt_type, FmtType::Char);
+        } else {
+            panic!("expected placeholder");
+        }
     }
 
     #[test]

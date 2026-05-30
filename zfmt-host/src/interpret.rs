@@ -91,6 +91,20 @@ impl Value {
 
     /// Display the value according to a format specifier.
     pub fn display_spec(&self, spec: &Spec) -> String {
+        // FourCC character display: intercept before delegating to fmt_uint/fmt_int.
+        if spec.fmt_type == FmtType::Char {
+            return match self {
+                Value::U8(v)  => fmt_fourcc_host(&v.to_le_bytes()),
+                Value::U16(v) => fmt_fourcc_host(&v.to_le_bytes()),
+                Value::U32(v) => fmt_fourcc_host(&v.to_le_bytes()),
+                Value::U64(v) => fmt_fourcc_host(&v.to_le_bytes()),
+                Value::I8(v)  => fmt_fourcc_host(&v.to_le_bytes()),
+                Value::I16(v) => fmt_fourcc_host(&v.to_le_bytes()),
+                Value::I32(v) => fmt_fourcc_host(&v.to_le_bytes()),
+                Value::I64(v) => fmt_fourcc_host(&v.to_le_bytes()),
+                _ => self.display_default(),
+            };
+        }
         match self {
             Value::U8(v)  => fmt_uint(*v as u64, false, spec),
             Value::U16(v) => fmt_uint(*v as u64, false, spec),
@@ -131,7 +145,7 @@ pub struct Spec {
 pub enum Align { #[default] None, Left, Right }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq)]
-pub enum FmtType { #[default] Display, LowerHex, UpperHex, Binary, Octal }
+pub enum FmtType { #[default] Display, LowerHex, UpperHex, Binary, Octal, Char }
 
 /// Parse a format spec string (the part after `:` in `{name:spec}`).
 pub fn parse_spec(s: &str) -> Result<Spec> {
@@ -168,6 +182,7 @@ pub fn parse_spec(s: &str) -> Result<Spec> {
         Some('X') => spec.fmt_type = FmtType::UpperHex,
         Some('b') => spec.fmt_type = FmtType::Binary,
         Some('o') => spec.fmt_type = FmtType::Octal,
+        Some('c') => spec.fmt_type = FmtType::Char,
         Some(c)   => bail!("unknown format type `{c}`"),
     }
 
@@ -188,6 +203,22 @@ fn apply_width(s: &str, spec: &Spec) -> String {
     }
 }
 
+fn fmt_fourcc_host(bytes: &[u8]) -> String {
+    let mut out = String::new();
+    for &b in bytes {
+        if b >= 0x20 && b <= 0x7e {
+            out.push(b as char);
+        } else {
+            const HEX: &[u8; 16] = b"0123456789abcdef";
+            out.push('\\');
+            out.push('x');
+            out.push(HEX[(b >> 4) as usize] as char);
+            out.push(HEX[(b & 0xf) as usize] as char);
+        }
+    }
+    out
+}
+
 fn fmt_uint(v: u64, negative: bool, spec: &Spec) -> String {
     let (radix, upper) = match spec.fmt_type {
         FmtType::Display  => (10u64, false),
@@ -195,6 +226,8 @@ fn fmt_uint(v: u64, negative: bool, spec: &Spec) -> String {
         FmtType::UpperHex => (16u64, true),
         FmtType::Binary   => (2u64,  false),
         FmtType::Octal    => (8u64,  false),
+        // Char is intercepted in display_spec before fmt_uint is called.
+        FmtType::Char     => (10u64, false),
     };
     let digits = to_digits(v, radix, upper);
     let sign = if negative { "-" } else if spec.sign { "+" } else { "" };
@@ -204,7 +237,7 @@ fn fmt_uint(v: u64, negative: bool, spec: &Spec) -> String {
             FmtType::UpperHex => "0X",
             FmtType::Binary   => "0b",
             FmtType::Octal    => "0o",
-            FmtType::Display  => "",
+            FmtType::Display | FmtType::Char => "",
         }
     } else { "" };
 
@@ -1016,5 +1049,40 @@ mod tests {
         let vals = interpret(&caller_bc, &payload, &db).unwrap();
         assert_eq!(vals.len(), 1);
         assert!(matches!(vals[0], Value::U32(777)));
+    }
+
+    #[test]
+    fn display_fourcc_all_printable() {
+        // "RIFF" stored LE: 0x46464952 → bytes [0x52, 0x49, 0x46, 0x46]
+        let spec = parse_spec("c").unwrap();
+        assert_eq!(Value::U32(0x46464952).display_spec(&spec), "RIFF");
+    }
+
+    #[test]
+    fn display_fourcc_space_printable() {
+        // "AVI " stored LE: 0x20495641 → [0x41, 0x56, 0x49, 0x20]
+        let spec = parse_spec("c").unwrap();
+        assert_eq!(Value::U32(0x20495641).display_spec(&spec), "AVI ");
+    }
+
+    #[test]
+    fn display_fourcc_non_printable_escape() {
+        // Low byte 0x00, rest 'F', 'I', 'F': 0x46494600 → [0x00, 0x46, 0x49, 0x46]
+        let spec = parse_spec("c").unwrap();
+        assert_eq!(Value::U32(0x46494600).display_spec(&spec), r"\x00FIF");
+    }
+
+    #[test]
+    fn display_fourcc_high_byte_escape() {
+        // High byte 0xFF: 0xFF464952 → [0x52, 0x49, 0x46, 0xFF]
+        let spec = parse_spec("c").unwrap();
+        assert_eq!(Value::U32(0xFF464952).display_spec(&spec), r"RIF\xff");
+    }
+
+    #[test]
+    fn display_fourcc_u8() {
+        let spec = parse_spec("c").unwrap();
+        assert_eq!(Value::U8(b'R').display_spec(&spec), "R");
+        assert_eq!(Value::U8(0x00).display_spec(&spec), r"\x00");
     }
 }

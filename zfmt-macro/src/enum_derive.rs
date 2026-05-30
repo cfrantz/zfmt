@@ -461,6 +461,7 @@ fn spec_expr(spec: &ParsedSpec) -> TokenStream {
         FmtType::UpperHex => quote! { ::zfmt::FormatType::UpperHex },
         FmtType::Binary   => quote! { ::zfmt::FormatType::Binary },
         FmtType::Octal    => quote! { ::zfmt::FormatType::Octal },
+        FmtType::Char     => quote! { ::zfmt::FormatType::Char },
     };
     let align = match spec.align {
         Align::None  => quote! { ::zfmt::Align::None },
