@@ -8,6 +8,14 @@ use crate::format::ZfmtU64;
 pub trait Logger {
     fn timestamp(&self) -> ZfmtU64;
 
+    /// 24-bit sequence counter for gap detection on the host (§7.2).
+    ///
+    /// The value is masked to 24 bits when written into `EventHeader.seq`.
+    /// The default returns 0, disabling sequence tracking.  Override this
+    /// in the main log-handling task's Logger implementation; IPC-client
+    /// loggers should leave the default.
+    fn next_seq(&self) -> u32 { 0 }
+
     /// Send a gather-write list of byte slices as a single logical message.
     fn send_vectored(&self, bufs: &[&[u8]]);
 

@@ -48,16 +48,21 @@ const fn u64_le(v: u64) -> [u8; 8] { v.to_le_bytes() }
 // ---------------------------------------------------------------------------
 // §7.2  EventHeader
 //
-// Non-padding fields used in hash: timestamp:ZfmtU64, severity:u8
+// Non-padding fields used in hash: timestamp:ZfmtU64, severity:u8, seq:[u8;3]
 // Hash input:
-//   "struct EventHeader\nformat {timestamp} {severity}\nfield timestamp ZfmtU64\nfield severity u8\n"
-// full_hash = 0x7a35399b8c73a273, tag = 0x8c73a273
+//   "struct EventHeader\nformat {timestamp} {severity}\nfield timestamp ZfmtU64\nfield severity u8\nfield seq [u8; 3]\n"
+// full_hash = 0x5a19e4cfe43ae42d, tag = 0xe43ae42d
 // format_hash = fnv1a_64("{timestamp} {severity}") as u32 = 0x112d69b2
 //
-// Layout: ZfmtU64(8) + u8(1) + _pad(3) = 12 bytes, 4-byte aligned.
+// Layout: ZfmtU64(8) + u8(1) + [u8;3](3) = 12 bytes, 4-byte aligned.
 //
-// Bytecode: U64_PAIR/single(0x88) U8/single(0x08) SKIP/fa 3(0x51,0x03) END(0x00) → 5 raw bytes
-// Padded:   [0x88, 0x08, 0x51, 0x03, 0x00, 0x00, 0x00, 0x00]  bc_len=5
+// Bytecode: U64_PAIR/single(0x88) U8/single(0x08) UTF8_BYTE|FIXED_ARRAY(0x49) LEB128(3)(0x03) END(0x00) → 5 raw bytes
+// Padded:   [0x88, 0x08, 0x49, 0x03, 0x00, 0x00, 0x00, 0x00]  bc_len=5
+//
+// `seq` is a 24-bit little-endian sequence counter assigned by the Logger.
+// The host decoder reads it at known byte offsets [9..12] when protocol_version >= 2
+// (§7.3); the bytecode treats it as a [u8;3] fixed array consumed but not
+// referenced by the format string, so generic decoders ignore it.
 
 /// Precedes every log record in the stream.
 #[repr(C)]
@@ -65,15 +70,22 @@ pub struct EventHeader {
     pub timestamp: ZfmtU64,
     /// Raw severity discriminant (Severity as u8).
     pub severity: u8,
-    pub _pad: [u8; 3],
+    /// 24-bit sequence counter, little-endian. Zero when sequencing is disabled.
+    pub seq: [u8; 3],
 }
 
 impl EventHeader {
-    pub const ZFMT_TAG: u32       = 0x8c73a273;
-    pub const ZFMT_FULL_HASH: u64 = 0x7a35399b8c73a273;
+    pub const ZFMT_TAG: u32       = 0xe43ae42d;
+    pub const ZFMT_FULL_HASH: u64 = 0x5a19e4cfe43ae42d;
 
-    pub fn new(timestamp: ZfmtU64, severity: Severity) -> Self {
-        Self { timestamp, severity: severity as u8, _pad: [0; 3] }
+    pub fn new(timestamp: ZfmtU64, severity: Severity, seq: u32) -> Self {
+        let s = seq & 0x00FF_FFFF;
+        Self { timestamp, severity: severity as u8, seq: [s as u8, (s >> 8) as u8, (s >> 16) as u8] }
+    }
+
+    /// Reconstruct the 24-bit sequence counter as a u32.
+    pub fn seq_value(&self) -> u32 {
+        u32::from_le_bytes([self.seq[0], self.seq[1], self.seq[2], 0])
     }
 
     pub fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
@@ -96,6 +108,7 @@ impl EventHeader {
             3 => "WARN",  4 => "ERROR", 5 => "FATAL",
             _ => "?",
         })
+        // `seq` is transport metadata; not referenced by the format string.
     }
 }
 
@@ -114,8 +127,8 @@ impl ZfmtEvent for EventHeader {
 impl FormatInto for EventHeader {} // no format string — uses default no-op
 
 #[used]
-#[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.8c73a273")]
-#[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.8c73a273")]
+#[cfg_attr(    target_os = "none",  link_section = ".zfmt_events.e43ae42d")]
+#[cfg_attr(not(target_os = "none"), link_section = ".zfmt_events.e43ae42d")]
 static _ZFMT_EVENT_HEADER: [u8; 36] = {
     let t  = u32_le(EventHeader::ZFMT_TAG);
     let fh = u64_le(EventHeader::ZFMT_FULL_HASH);
@@ -127,7 +140,7 @@ static _ZFMT_EVENT_HEADER: [u8; 36] = {
         fm[0], fm[1], fm[2], fm[3],         // format_hash
         0, 0, 0, 0,                         // _pad
         5, 0, 0, 0,                         // bc_len = 5
-        0x88, 0x08, 0x51, 0x03, 0x00,       // bytecode (5 bytes): U64_PAIR U8 SKIP/3 END
+        0x88, 0x08, 0x49, 0x03, 0x00,       // bytecode: U64_PAIR U8 UTF8_BYTE|FIXED_ARRAY/3 END
         0, 0, 0,                            // padding to 4-byte boundary
     ]
 };
@@ -173,7 +186,7 @@ pub struct StreamStart {
 impl StreamStart {
     pub const ZFMT_TAG: u32       = 0x0ef1ba00;
     pub const ZFMT_FULL_HASH: u64 = 0x1aaef8910ef1ba00;
-    pub const PROTOCOL_VERSION: u16 = 1;
+    pub const PROTOCOL_VERSION: u16 = 2;
 
     pub fn zfmt_tag(&self) -> u32 { Self::ZFMT_TAG }
     pub fn payload_size(&self) -> usize { core::mem::size_of::<Self>() }

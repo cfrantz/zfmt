@@ -17,11 +17,11 @@ const DM_FH:    u64    = 0xcef2c6c3a1a6a340;
 const DM_FMTH:  u32    = 0x524fb994;
 const DM_BC:    &[u8]  = &[0x4b, 0x00];
 
-// EventHeader: U64_PAIR/single, U8/single, SKIP/fa 3, END
-const HDR_TAG:  u32    = 0x8c73a273;
-const HDR_FH:   u64    = 0x7a35399b8c73a273;
+// EventHeader: U64_PAIR/single, U8/single, UTF8_BYTE|FIXED_ARRAY/3, END
+const HDR_TAG:  u32    = 0xe43ae42d;
+const HDR_FH:   u64    = 0x5a19e4cfe43ae42d;
 const HDR_FMTH: u32    = 0x112d69b2;
-const HDR_BC:   &[u8]  = &[0x88, 0x08, 0x51, 0x03, 0x00];
+const HDR_BC:   &[u8]  = &[0x88, 0x08, 0x49, 0x03, 0x00];
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -103,7 +103,7 @@ fn pipeline_header_and_event_pair() {
         ],
     );
 
-    // EventHeader payload: ZfmtU64{lo=42,hi=0}, severity=2 (Info), _pad[3]
+    // EventHeader payload: ZfmtU64{lo=42,hi=0}, severity=2 (Info), seq[3]=0
     let mut hdr_payload = vec![0u8; 12];
     hdr_payload[..4].copy_from_slice(&42u32.to_le_bytes()); // timestamp lo
     // timestamp hi = 0
@@ -250,8 +250,7 @@ fn pipeline_stream_start_scales_timestamps() {
         &[(fmt_hash, "{timestamp} {severity}")],
     );
 
-    // StreamStart payload: protocol_version=1, _pad0=[0;2], tick_rate_hz=ZfmtU64(1_000_000),
-    //                      firmware_build_id=ZfmtU64(0)
+    // StreamStart payload: protocol_version=1 (no seq tracking), tick_rate_hz=ZfmtU64(1_000_000)
     let mut ss_payload = vec![0u8; 20];
     ss_payload[..2].copy_from_slice(&1u16.to_le_bytes());
     ss_payload[4..8].copy_from_slice(&1_000_000u32.to_le_bytes());   // tick_rate_hz lo

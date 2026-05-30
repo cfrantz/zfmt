@@ -64,33 +64,44 @@ fn event_header_full_hash_lower32_is_tag() {
 
 #[test]
 fn event_header_size() {
-    // §7.2: ZfmtU64(8) + severity(1) + _pad(3) = 12
+    // §7.2: ZfmtU64(8) + severity(1) + seq[u8;3](3) = 12
     assert_eq!(core::mem::size_of::<EventHeader>(), 12);
-    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info);
+    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info, 0);
     assert_eq!(hdr.payload_size(), 12);
 }
 
 #[test]
 fn event_header_zfmt_tag_method() {
-    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info);
+    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info, 0);
     assert_eq!(hdr.zfmt_tag(), EventHeader::ZFMT_TAG);
 }
 
 #[test]
 fn event_header_serialize_roundtrip() {
     let ts = ZfmtU64::new(0xcafe1234, 0xdeadbeef);
-    let hdr = EventHeader::new(ts, Severity::Warn);
+    let hdr = EventHeader::new(ts, Severity::Warn, 0);
     let mut buf = [0u8; 12];
     hdr.serialize_into(&mut buf);
     assert_eq!(&buf[..4], &ts.lo.to_le_bytes());
     assert_eq!(&buf[4..8], &ts.hi.to_le_bytes());
     assert_eq!(buf[8], Severity::Warn as u8);
-    assert_eq!(&buf[9..12], &[0u8; 3]);
+    assert_eq!(&buf[9..12], &[0u8; 3]); // seq = 0
+}
+
+#[test]
+fn event_header_seq_roundtrip() {
+    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info, 0xABCDEF);
+    assert_eq!(hdr.seq_value(), 0xABCDEF);
+    let mut buf = [0u8; 12];
+    hdr.serialize_into(&mut buf);
+    assert_eq!(buf[9],  0xEF);
+    assert_eq!(buf[10], 0xCD);
+    assert_eq!(buf[11], 0xAB);
 }
 
 #[test]
 fn event_header_format_into() {
-    let hdr = EventHeader::new(ZfmtU64::new(1000, 0), Severity::Info);
+    let hdr = EventHeader::new(ZfmtU64::new(1000, 0), Severity::Info, 0);
     // Under no-64bit, ZfmtU64 renders as 16 hex digits; otherwise decimal.
     #[cfg(not(feature = "no-64bit"))]
     assert_eq!(render(|w| hdr.format_into(w)), "1000 INFO");
@@ -100,7 +111,7 @@ fn event_header_format_into() {
 
 #[test]
 fn event_header_severity_field() {
-    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Fatal);
+    let hdr = EventHeader::new(ZfmtU64::default(), Severity::Fatal, 0);
     assert_eq!(hdr.severity, Severity::Fatal as u8);
 }
 

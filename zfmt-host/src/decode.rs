@@ -9,7 +9,7 @@ use crate::interpret;
 
 // Well-known event tags (§7) — FNV-1a hashes of the canonical struct definitions.
 const TAG_STREAM_START:  u32 = 0x0ef1ba00;
-const TAG_EVENT_HEADER:  u32 = 0x8c73a273;
+const TAG_EVENT_HEADER:  u32 = 0xe43ae42d;
 
 /// Decode a binary stream, writing one line per frame to `out`.
 ///
@@ -23,6 +23,9 @@ pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write) -> 
     let mut pos = 0usize;
     // Updated when a StreamStart frame is parsed; 0 means "rate unknown".
     let mut tick_rate_hz: u64 = 0;
+    // Sequence tracking: active only when StreamStart.protocol_version >= 2.
+    let mut seq_enabled = false;
+    let mut prev_seq: Option<u32> = None;
 
     while pos < data.len() {
         if data.len() - pos < 5 {
@@ -59,13 +62,30 @@ pub fn decode_stream(data: &[u8], databases: &[Db], out: &mut dyn io::Write) -> 
             })
         });
 
-        // Extract tick_rate_hz from StreamStart before generic decode.
-        // StreamStart layout: u16(2) + _pad(2) + ZfmtU64{lo,hi}(8) + ...
-        // tick_rate_hz lo is at [4..8], hi at [8..12].
+        // Extract metadata from StreamStart before generic decode.
+        // StreamStart layout: u16(2) + _pad0(2) + ZfmtU64{lo,hi}(8) + ZfmtU64{lo,hi}(8)
+        // protocol_version at [0..2]; tick_rate_hz lo at [4..8], hi at [8..12].
         if tag == TAG_STREAM_START && payload.len() >= 12 {
+            let protocol_version = u16::from_le_bytes(payload[0..2].try_into().unwrap());
+            seq_enabled = protocol_version >= 2;
+            if seq_enabled { prev_seq = None; } // reset on new stream
             let lo = u32::from_le_bytes(payload[4..8].try_into().unwrap()) as u64;
             let hi = u32::from_le_bytes(payload[8..12].try_into().unwrap()) as u64;
             tick_rate_hz = (hi << 32) | lo;
+        }
+
+        // Sequence gap detection: EventHeader.seq lives at bytes [9..12].
+        // Emit a gap annotation line before the header that follows a drop.
+        if tag == TAG_EVENT_HEADER && seq_enabled && payload.len() >= 12 {
+            let cur_seq = u32::from_le_bytes([payload[9], payload[10], payload[11], 0]);
+            if let Some(prev) = prev_seq {
+                let expected = prev.wrapping_add(1) & 0x00FF_FFFF;
+                if cur_seq != expected {
+                    let dropped = cur_seq.wrapping_sub(prev.wrapping_add(1)) & 0x00FF_FFFF;
+                    writeln!(out, "[seq gap: ~{dropped} events dropped]")?;
+                }
+            }
+            prev_seq = Some(cur_seq);
         }
 
         match result {
@@ -240,22 +260,25 @@ mod tests {
     }
 
     // Helper: build a minimal StreamStart payload (20 bytes, §7.3).
-    // Layout: u16(2) + _pad(2) + ZfmtU64{lo,hi}(8) + ZfmtU64{lo,hi}(8) = 20 bytes.
-    fn stream_start_payload(tick_rate_hz: u64) -> Vec<u8> {
+    // Layout: u16(2) + _pad0(2) + ZfmtU64{lo,hi}(8) + ZfmtU64{lo,hi}(8) = 20 bytes.
+    fn stream_start_payload(tick_rate_hz: u64, protocol_version: u16) -> Vec<u8> {
         let mut p = vec![0u8; 20];
-        p[..2].copy_from_slice(&1u16.to_le_bytes());                        // protocol_version = 1
+        p[..2].copy_from_slice(&protocol_version.to_le_bytes());
         p[4..8].copy_from_slice(&(tick_rate_hz as u32).to_le_bytes());      // tick_rate_hz lo
         p[8..12].copy_from_slice(&((tick_rate_hz >> 32) as u32).to_le_bytes()); // tick_rate_hz hi
         p
     }
 
     // Helper: build an EventHeader payload (12 bytes, §7.2).
-    // Layout: ZfmtU64{lo,hi}(8) + u8(1) + _pad(3) = 12 bytes.
-    fn event_header_payload(timestamp_ticks: u64, severity: u8) -> Vec<u8> {
+    // Layout: ZfmtU64{lo,hi}(8) + u8(1) + seq[u8;3](3) = 12 bytes.
+    fn event_header_payload(timestamp_ticks: u64, severity: u8, seq: u32) -> Vec<u8> {
         let mut p = vec![0u8; 12];
         p[..4].copy_from_slice(&(timestamp_ticks as u32).to_le_bytes());      // timestamp lo
         p[4..8].copy_from_slice(&((timestamp_ticks >> 32) as u32).to_le_bytes()); // timestamp hi
         p[8] = severity;
+        p[9]  = (seq & 0xFF) as u8;
+        p[10] = ((seq >> 8) & 0xFF) as u8;
+        p[11] = ((seq >> 16) & 0xFF) as u8;
         p
     }
 
@@ -274,7 +297,7 @@ mod tests {
     #[test]
     fn decode_stream_start_sets_tick_rate() {
         let mut db = Db::memory().unwrap();
-        let ss_payload = stream_start_payload(1_000_000);
+        let ss_payload = stream_start_payload(1_000_000, 1);
         let ss_frame = frame(TAG_STREAM_START, &ss_payload);
 
         // StreamStart is not in the DB — it should be skipped gracefully.
@@ -285,11 +308,11 @@ mod tests {
         db.ingest(&[
             EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
                 format_hash: fmt_hash,
-                bytecode: vec![0x88, 0x08, 0x51, 0x03, 0x00] },
+                bytecode: vec![0x88, 0x08, 0x49, 0x03, 0x00] },
         ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
         0).unwrap();
 
-        let hdr_payload = event_header_payload(2_000_000, 2); // 2s at 1MHz
+        let hdr_payload = event_header_payload(2_000_000, 2, 0); // 2s at 1MHz
         let mut stream = ss_frame;
         stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr_payload));
 
@@ -299,6 +322,116 @@ mod tests {
         // Timestamp should be scaled: 2_000_000 ticks / 1_000_000 Hz = 2.0 s
         assert!(s.contains("2.000000"), "expected scaled timestamp in: {s:?}");
         assert!(s.contains("2"), "expected severity in: {s:?}");
+    }
+
+    #[test]
+    fn decode_seq_gap_detected() {
+        // v2 stream: two EventHeaders with a gap of 3 in seq.
+        let mut db = Db::memory().unwrap();
+        let fmt_hash: u32 = 0xbeef0001;
+        use crate::elf::{EventEntry, StringEntry};
+        db.ingest(&[
+            EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+                format_hash: fmt_hash,
+                bytecode: vec![0x88, 0x08, 0x49, 0x03, 0x00] },
+        ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let ss_payload = stream_start_payload(1_000_000, 2); // protocol_version = 2
+        let hdr0 = event_header_payload(0, 2, 0);  // seq = 0
+        let hdr1 = event_header_payload(4, 2, 4);  // seq = 4 → gap of 3
+
+        let mut stream = frame(TAG_STREAM_START, &ss_payload);
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr0));
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
+
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(s.contains("[seq gap: ~3 events dropped]"),
+            "expected gap annotation; got:\n{s}");
+    }
+
+    #[test]
+    fn decode_seq_no_gap_no_annotation() {
+        // v2 stream: two consecutive EventHeaders with no gap.
+        let mut db = Db::memory().unwrap();
+        let fmt_hash: u32 = 0xbeef0002;
+        use crate::elf::{EventEntry, StringEntry};
+        db.ingest(&[
+            EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+                format_hash: fmt_hash,
+                bytecode: vec![0x88, 0x08, 0x49, 0x03, 0x00] },
+        ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let ss_payload = stream_start_payload(1_000_000, 2);
+        let hdr0 = event_header_payload(0, 2, 0);
+        let hdr1 = event_header_payload(1, 2, 1); // seq = 1, no gap
+
+        let mut stream = frame(TAG_STREAM_START, &ss_payload);
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr0));
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
+
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(!s.contains("seq gap"), "unexpected gap annotation; got:\n{s}");
+    }
+
+    #[test]
+    fn decode_seq_v1_stream_no_tracking() {
+        // v1 stream: seq bytes are present but ignored even if they look like a gap.
+        let mut db = Db::memory().unwrap();
+        let fmt_hash: u32 = 0xbeef0003;
+        use crate::elf::{EventEntry, StringEntry};
+        db.ingest(&[
+            EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+                format_hash: fmt_hash,
+                bytecode: vec![0x88, 0x08, 0x49, 0x03, 0x00] },
+        ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let ss_payload = stream_start_payload(1_000_000, 1); // protocol_version = 1
+        let hdr0 = event_header_payload(0, 2, 0);
+        let hdr1 = event_header_payload(1, 2, 99); // seq = 99, would be a gap in v2
+
+        let mut stream = frame(TAG_STREAM_START, &ss_payload);
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr0));
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
+
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(!s.contains("seq gap"), "v1 stream should not produce gap annotations; got:\n{s}");
+    }
+
+    #[test]
+    fn decode_seq_wrap_detected() {
+        // v2 stream: seq wraps from 0xFFFFFF to 0 — gap of 0, not a drop.
+        let mut db = Db::memory().unwrap();
+        let fmt_hash: u32 = 0xbeef0004;
+        use crate::elf::{EventEntry, StringEntry};
+        db.ingest(&[
+            EventEntry { tag: TAG_EVENT_HEADER, full_hash: TAG_EVENT_HEADER as u64,
+                format_hash: fmt_hash,
+                bytecode: vec![0x88, 0x08, 0x49, 0x03, 0x00] },
+        ], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
+        0).unwrap();
+
+        let ss_payload = stream_start_payload(1_000_000, 2);
+        let max_seq: u32 = 0x00FF_FFFF;
+        let hdr0 = event_header_payload(0, 2, max_seq);
+        let hdr1 = event_header_payload(1, 2, 0); // wraps to 0 — expected, no gap
+
+        let mut stream = frame(TAG_STREAM_START, &ss_payload);
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr0));
+        stream.extend_from_slice(&frame(TAG_EVENT_HEADER, &hdr1));
+
+        let mut out = Vec::new();
+        decode_stream(&stream, &[db], &mut out).unwrap();
+        let s = String::from_utf8(out).unwrap();
+        assert!(!s.contains("seq gap"), "wrap should not be reported as gap; got:\n{s}");
     }
 
     #[test]
@@ -314,7 +447,7 @@ mod tests {
         }], &[StringEntry { hash: fmt_hash, content: "{timestamp} {severity}".to_owned() }],
         0).unwrap();
 
-        let hdr_payload = event_header_payload(99_000, 3);
+        let hdr_payload = event_header_payload(99_000, 3, 0);
         let stream = frame(TAG_EVENT_HEADER, &hdr_payload);
         let mut out = Vec::new();
         decode_stream(&stream, &[db], &mut out).unwrap();

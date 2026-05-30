@@ -441,13 +441,34 @@ Emitted immediately before every logged event.
 pub struct EventHeader {
     pub timestamp: ZfmtU64,  // ticks since boot, as two u32 halves [lo, hi]
     pub severity:  Severity,
-    pub _pad:      [u8; 3],
+    pub seq:       [u8; 3],  // 24-bit little-endian sequence counter
 }
 // sizeof = 12 bytes
 ```
 
 The tick rate (ticks per second) is communicated via `StreamStart` (§7.3).
 The host decoder scales `timestamp` to wall-clock time using that rate.
+
+`seq` is a 24-bit unsigned counter (0–16,777,215) assigned by the Logger
+implementation at the point of emission.  It wraps at 2²⁴.  The host decoder
+checks `seq` for gaps when `StreamStart.protocol_version >= 2` (§7.3); a gap
+indicates that one or more events were dropped before this header.  Loggers
+that do not provide sequence numbers (e.g. IPC client loggers that forward
+events to a central handler) must return 0 from `Logger::next_seq` (§12.1),
+which is the default.  When all loggers return 0, `protocol_version` is left
+at 1 and the host ignores the `seq` bytes.
+
+The bytecode for `EventHeader` includes the `seq` field as
+`UTF8_BYTE|FIXED_ARRAY 3` — it is consumed by the decoder but is not
+referenced by the format string `"{timestamp} {severity}"`, so generic
+renderers emit only the timestamp and severity.  The host EventHeader handler
+reads `seq` directly from known byte offsets [9..12].
+
+Canonical hash:
+```
+full_hash = 0x5a19e4cfe43ae42d
+tag       = 0xe43ae42d
+```
 
 ### 7.3 StreamStart
 
@@ -468,6 +489,17 @@ pub struct StreamStart {
 
 `firmware_build_id` allows host tooling to locate the correct ELF and extract
 its linker sections.
+
+`protocol_version` declares the stream format:
+
+| Value | Meaning |
+|-------|---------|
+| 1 | Baseline: `EventHeader.seq` bytes are always zero; host ignores them |
+| 2 | Sequence numbers active: host tracks `EventHeader.seq` and annotates gaps |
+
+Implementations that use `Logger::next_seq` (§12.1) must emit `StreamStart`
+with `protocol_version = 2`.  The constant `StreamStart::PROTOCOL_VERSION`
+reflects the version produced by the current implementation.
 
 ### 7.4 DroppedEvents
 
@@ -807,6 +839,14 @@ written.  No temporary buffer is required.
 pub trait Logger {
     /// Returns the current timestamp in ticks.
     fn timestamp(&self) -> u64;
+
+    /// Returns the next 24-bit sequence counter value for `EventHeader.seq`.
+    ///
+    /// The value is masked to 24 bits before being written.  The default
+    /// implementation returns 0, keeping `protocol_version = 1` semantics.
+    /// Override in the central log-handling task's Logger; IPC-client loggers
+    /// that forward events to a central handler should leave the default.
+    fn next_seq(&self) -> u32 { 0 }
 
     /// Sends `bufs` as a single logical message (scatter-gather write).
     fn send_vectored(&self, bufs: &[&[u8]]);
