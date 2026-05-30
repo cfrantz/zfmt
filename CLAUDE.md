@@ -27,6 +27,7 @@ cargo test -p zfmt --features no-64bit
 cargo build -p zfmt-host
 
 # Run the CLI
+cargo run -p zfmt-host -- check --database events.db firmware.elf
 cargo run -p zfmt-host -- ingest --database events.db firmware.elf
 cargo run -p zfmt-host -- decode --database events.db stream.bin
 cargo run -p zfmt-host -- decode --database events.db --tick-rate-hz 1000000 --protocol-version 2 stream.bin
@@ -63,6 +64,14 @@ Event identity is a 64-bit FNV-1a hash of a canonical text description of the st
 ### Bytecode
 
 Opcodes are a single byte: `(item_type << 3) | operand_type`. Key item types: `u8`–`u64`, `i8`–`i64`, `f32`, `f64`, `bool`, `utf8-byte`, `skip`, `dispatch` (inline enum), `call` (nested struct), `string-ref`, `u64-pair` (ZfmtU64). Operand types: `single`, `fixed-array` (LEB128 count in bytecode), `zero-term`, `var-length` (LEB128 count in stream). See §4 of `SPEC.md`.
+
+### Format specifiers
+
+The `c` format type displays integers as FourCC character codes. Bytes are extracted in little-endian order (LSB-first), matching in-memory layout on LE targets. Printable ASCII (0x20–0x7E) is emitted as-is; all other bytes are escaped as `\xNN`. Example: `0x46464952u32` with `:c` → `"RIFF"`. Works on `u8`, `u16`, `u32`, `u64` and their signed counterparts; most useful on `u32`. Newtype wrappers around `u32` can derive `Zfmt` with `#[zfmt(format = "{0:c}")]` and use `:c` in parent event format strings for consistent host-side display.
+
+### Tag collision handling
+
+Tag collisions cannot be detected by the proc-macro (per-item, no cross-type visibility). Detection happens at **`zfmt ingest` time**: same-build collisions are caught because the linker concatenates duplicate-tagged entries into the same ELF section; cross-build collisions are caught against the accumulated database. The recommended resolution is to rename the conflicting type. A `#[zfmt(salt = "...")]` attribute (not yet implemented) is the planned escape hatch for cases where renaming is not feasible.
 
 ### Logger trait design
 
@@ -106,6 +115,7 @@ Well-known tags (§7 of `SPEC.md`):
 - **`db.rs`** — SQLite store (via `rusqlite`) with tables `events`, `strings`, `ingested_builds`; hashes stored as hex text to avoid i64 truncation of u64 values
 - **`interpret.rs`** — bytecode interpreter that reads payload bytes and produces typed field values
 - **`decode.rs`** — walks the binary stream, dispatches by tag, calls the interpreter, formats output; on `protocol_version >= 2` streams tracks `EventHeader.seq` and emits `[seq gap: ~N events dropped]` annotations before headers where the counter skips. `decode_stream()` takes a `&DecodeConfig` (fallback `tick_rate_hz` and `protocol_version` used when no `StreamStart` is present; a `StreamStart` in the stream always overrides). Use `DecodeConfig::default()` for normal operation.
+- **`db.rs`** — also exposes `Db::check(&self, events, strings)` for read-only collision validation (same logic as `ingest` but never writes; returns `CheckStats`). Used by `zfmt check`.
 - **`export.rs`** — renders the database as human-readable companion text (`events.db.txt`)
 
 ### Feature flags
