@@ -212,7 +212,7 @@ fn fmt_str_value<W: Write>(w: &mut W, s: &str, spec: FormatSpec) -> Result<(), E
 fn fmt_fourcc<W: Write>(w: &mut W, bytes: &[u8]) -> Result<(), Error> {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     for &b in bytes {
-        if b >= 0x20 && b <= 0x7e {
+        if (0x20..=0x7e).contains(&b) {
             w.write_char(b as char)?;
         } else {
             let escape = [b'\\', b'x', HEX[(b >> 4) as usize], HEX[(b & 0xf) as usize]];
@@ -380,7 +380,7 @@ impl Format for str {
     }
 }
 
-impl<'a> Format for &'a str {
+impl Format for &str {
     fn fmt<W: Write>(&self, w: &mut W, spec: FormatSpec) -> Result<(), Error> {
         fmt_str_value(w, self, spec)
     }

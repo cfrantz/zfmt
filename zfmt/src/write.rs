@@ -28,6 +28,12 @@ pub struct FixedBuf<const N: usize> {
     len: usize,
 }
 
+impl<const N: usize> Default for FixedBuf<N> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<const N: usize> FixedBuf<N> {
     pub const fn new() -> Self {
         Self { buf: [0u8; N], len: 0 }
