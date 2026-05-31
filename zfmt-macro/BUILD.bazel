@@ -1,0 +1,16 @@
+# Licensed under the Apache-2.0 license
+# SPDX-License-Identifier: Apache-2.0
+
+load("@rules_rust//rust:defs.bzl", "rust_proc_macro")
+
+rust_proc_macro(
+    name = "zfmt_macro",
+    srcs = glob(["src/**/*.rs"]),
+    edition = "2021",
+    visibility = ["//visibility:public"],
+    deps = [
+        "@zfmt_crates//:proc-macro2",
+        "@zfmt_crates//:quote",
+        "@zfmt_crates//:syn",
+    ],
+)
