@@ -7,7 +7,11 @@ rust_library(
     name = "zfmt",
     srcs = glob(["src/**/*.rs"]),
     crate_features = [
+        "log-level-trace",
+        "log-level-debug",
         "log-level-info",
+        "log-level-warn",
+        "log-level-error",
         "output-text",
     ],
     edition = "2021",

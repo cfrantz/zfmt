@@ -36,12 +36,23 @@ impl<const N: usize> Default for FixedBuf<N> {
 
 impl<const N: usize> FixedBuf<N> {
     pub const fn new() -> Self {
-        Self { buf: [0u8; N], len: 0 }
+        Self {
+            buf: [0u8; N],
+            len: 0,
+        }
+    }
+
+    pub fn clear(&mut self) {
+        self.len = 0;
     }
 
     pub fn as_str(&self) -> &str {
         // SAFETY: we only write valid UTF-8 through Write::write_str.
         unsafe { core::str::from_utf8_unchecked(&self.buf[..self.len]) }
+    }
+
+    pub fn as_slice(&self) -> &[u8] {
+        &self.buf[..self.len]
     }
 
     pub fn len(&self) -> usize {
