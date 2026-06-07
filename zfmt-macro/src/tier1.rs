@@ -109,7 +109,7 @@ pub fn derive_struct(input: &DeriveInput) -> syn::Result<TokenStream> {
     };
 
     let format_into_impl = crate::format_into::generate(input)?;
-    let string_section = crate::codegen::gen_string_section(format_str.as_deref());
+    let string_section = crate::codegen::gen_string_section(format_str.as_deref(), Some(&name_str));
 
     let tag_lit = tag;
     let full_hash_lit = full_hash;
@@ -227,7 +227,8 @@ fn derive_nested_struct(
 
     let format_into_impl = crate::format_into::generate(input)?;
     let string_section = crate::codegen::gen_string_section(
-        crate::parse::extract_format_str(&input.attrs)?.as_deref()
+        crate::parse::extract_format_str(&input.attrs)?.as_deref(),
+        Some(&struct_name.to_string()),
     );
 
     Ok(quote! {

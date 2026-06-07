@@ -229,7 +229,7 @@ pub fn total_size_with_tail_padding(plans: &[FieldPlan]) -> Option<usize> {
 ///   hash(u32 LE) + len(u16 LE) + _pad(u16=0) + bytes[padded to 4-byte boundary]
 ///
 /// Returns an empty TokenStream when `format_str` is None.
-pub fn gen_string_section(format_str: Option<&str>) -> TokenStream {
+pub fn gen_string_section(format_str: Option<&str>, suffix: Option<&str>) -> TokenStream {
     let fmt = match format_str {
         Some(s) if !s.is_empty() => s,
         _ => return quote! {},
@@ -251,7 +251,10 @@ pub fn gen_string_section(format_str: Option<&str>) -> TokenStream {
     let entry_len = entry.len();
     let entry_lit = LitByteStr::new(&entry, Span::call_site());
     let section_name = format!(".zfmt_strings.{:08x}", hash);
-    let static_name = format_ident!("__ZFMT_STRING_{:08X}", hash);
+    let static_name = match suffix {
+        Some(s) => format_ident!("__ZFMT_STRING_{}_{:08X}", s, hash),
+        None => format_ident!("__ZFMT_STRING_{:08X}", hash),
+    };
 
     quote! {
         #[used]

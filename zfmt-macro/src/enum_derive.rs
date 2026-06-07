@@ -136,7 +136,8 @@ fn derive_toplevel_enum(input: &DeriveInput, data: &DataEnum) -> syn::Result<Tok
         fmt_arms.push(quote! { #pat => { #fmt_arm_body } });
 
         // Linker section static
-        let ls = build_linker_static(tag, full_hash, &access_plans, vformat_str.as_deref())?;
+        let suffix = format!("{}_{}", enum_name_str, vname_str);
+        let ls = build_linker_static(tag, full_hash, &access_plans, vformat_str.as_deref(), Some(&suffix))?;
         linker_statics.push(ls);
     }
 
@@ -270,7 +271,8 @@ fn derive_inline_enum(
         let entry_len = entry.len();
         let entry_lit = LitByteStr::new(&entry, Span::call_site());
 
-        let string_section = crate::codegen::gen_string_section(vformat_str.as_deref());
+        let suffix = format!("{}_{}", enum_name_str, vname_str);
+        let string_section = crate::codegen::gen_string_section(vformat_str.as_deref(), Some(&suffix));
         linker_statics.push(quote! {
             #[used]
             #[cfg_attr(target_os = "none", link_section = #section_name)]
@@ -492,6 +494,7 @@ fn build_linker_static(
     full_hash: u64,
     plans: &[FieldPlan],
     format_str: Option<&str>,
+    suffix: Option<&str>,
 ) -> syn::Result<TokenStream> {
     let mut bc = gen_bytecode(plans).map_err(|e| {
         syn::Error::new(Span::call_site(), e)
@@ -515,7 +518,7 @@ fn build_linker_static(
     let entry_len = entry.len();
     let entry_lit = LitByteStr::new(&entry, Span::call_site());
 
-    let string_section = crate::codegen::gen_string_section(format_str);
+    let string_section = crate::codegen::gen_string_section(format_str, suffix);
 
     Ok(quote! {
         #[used]

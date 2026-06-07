@@ -39,7 +39,7 @@ pub fn zfmt_str(input: TokenStream) -> TokenStream {
         Err(e) => return e.to_compile_error().into(),
     };
     let s = lit.value();
-    let string_section = codegen::gen_string_section(Some(&s));
+    let string_section = codegen::gen_string_section(Some(&s), None);
     let hash32: u32 = hash::fnv1a_64(&s) as u32;
     quote::quote! {{
         #string_section
