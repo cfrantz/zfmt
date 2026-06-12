@@ -110,6 +110,19 @@ impl EventHeader {
         })
         // `seq` is transport metadata; not referenced by the format string.
     }
+
+    pub fn from_bytes(buf: &[u8]) -> Option<Self> {
+        if buf.len() == 12 {
+            let tlo = u32::from_le_bytes([buf[0], buf[1], buf[2], buf[3]]);
+            let thi = u32::from_le_bytes([buf[4], buf[5], buf[6], buf[7]]);
+            Some(Self { timestamp: ZfmtU64::new(tlo, thi),
+                severity: buf[8],
+                seq: [buf[9], buf[10], buf[11]],
+            })
+        } else {
+            None
+        }
+    }
 }
 
 impl ZfmtEvent for EventHeader {

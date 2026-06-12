@@ -89,6 +89,45 @@ fn event_header_serialize_roundtrip() {
 }
 
 #[test]
+fn event_header_from_bytes_roundtrip() {
+    let ts = ZfmtU64::new(0xcafe1234, 0xdeadbeef);
+    let seq = 0x123456;
+    let severity = Severity::Info;
+    let hdr = EventHeader::new(ts, severity, seq);
+    let mut buf = [0u8; 12];
+    hdr.serialize_into(&mut buf);
+
+    let decoded = EventHeader::from_bytes(&buf).unwrap();
+    assert_eq!(decoded.timestamp, ts);
+    assert_eq!(decoded.severity, severity as u8);
+    assert_eq!(decoded.seq_value(), seq);
+}
+
+#[test]
+fn event_header_from_bytes_correct_fields() {
+    let buf = [
+        0x01, 0x02, 0x03, 0x04, // ts lo
+        0x05, 0x06, 0x07, 0x08, // ts hi
+        0x09,                   // severity
+        0x0a, 0x0b, 0x0c,       // seq
+    ];
+    let hdr = EventHeader::from_bytes(&buf).unwrap();
+    assert_eq!(hdr.timestamp, ZfmtU64::new(0x04030201, 0x08070605));
+    assert_eq!(hdr.severity, 9);
+    assert_eq!(hdr.seq, [0x0a, 0x0b, 0x0c]);
+    assert_eq!(hdr.seq_value(), 0x0c0b0a);
+}
+
+#[test]
+fn event_header_from_bytes_invalid_len() {
+    let buf = [0u8; 11];
+    assert!(EventHeader::from_bytes(&buf).is_none());
+
+    let buf = [0u8; 13];
+    assert!(EventHeader::from_bytes(&buf).is_none());
+}
+
+#[test]
 fn event_header_seq_roundtrip() {
     let hdr = EventHeader::new(ZfmtU64::default(), Severity::Info, 0xABCDEF);
     assert_eq!(hdr.seq_value(), 0xABCDEF);
